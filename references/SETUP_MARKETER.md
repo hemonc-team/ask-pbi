@@ -28,9 +28,8 @@ pip3 install requests --user
 SKILL=~/ask-pbi
 cp "$SKILL/config/pbi_config.example.json" "$SKILL/config/pbi_config.json"
 
-"$SKILL/scripts/pbi_run.sh" device-code-start
-# ссылка в браузере → рабочий email
-"$SKILL/scripts/pbi_run.sh" device-code-poll --device-code <код>
+"$SKILL/scripts/pbi_run.sh" login
+# ссылка в браузере → рабочий email; команда сама дождётся входа
 "$SKILL/scripts/pbi_run.sh" list-workspaces
 ```
 

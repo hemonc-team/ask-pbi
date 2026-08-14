@@ -111,6 +111,37 @@ def device_code_poll(cfg: Config, device_code: str) -> dict[str, Any]:
     return payload
 
 
+def device_code_wait(cfg: Config, start: dict[str, Any]) -> dict[str, Any]:
+    """Poll until the user finishes browser login (or the code expires)."""
+    device_code = start["device_code"]
+    interval = max(int(start.get("interval") or 5), 5)
+    deadline = time.time() + int(start.get("expires_in") or 900)
+    while time.time() < deadline:
+        r = requests.post(
+            f"{AUTHORITY}/{cfg.tenant_id}/oauth2/v2.0/token",
+            data={
+                "client_id": cfg.client_id,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": device_code,
+            },
+            timeout=30,
+        )
+        payload = r.json()
+        if r.status_code == 200 and "access_token" in payload:
+            _save_tokens(cfg, payload)
+            return payload
+        err = payload.get("error")
+        if err == "authorization_pending":
+            time.sleep(interval)
+            continue
+        if err == "slow_down":
+            interval += 5
+            time.sleep(interval)
+            continue
+        raise AuthError(f"Device code flow не завершён: {payload}")
+    raise AuthError("Код входа истёк. Запусти login ещё раз.")
+
+
 def refresh_access_token(cfg: Config) -> dict[str, Any]:
     tokens = _load_tokens(cfg)
     refresh_token = tokens.get("refresh_token")
@@ -205,9 +236,14 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    sub.add_parser("login", help="Один шаг: ссылка в браузере + ожидание входа")
     sub.add_parser("device-code-start")
     sp = sub.add_parser("device-code-poll")
-    sp.add_argument("--device-code", required=True)
+    sp.add_argument(
+        "--device-code",
+        default=None,
+        help="Если не указан — берётся из ~/.pbi/device.json",
+    )
     sub.add_parser("token")
     sub.add_parser("list-workspaces")
     sp = sub.add_parser("list-datasets")
@@ -225,11 +261,24 @@ def main() -> None:
     args = p.parse_args()
     cfg = Config.load()
 
+    if args.cmd == "login":
+        start = device_code_start(cfg)
+        print(start.get("message", "Открой ссылку и войди рабочим email."))
+        print("Жду вход в браузере… не закрывай это окно.")
+        device_code_wait(cfg, start)
+        print("OK, вход сохранён.")
+        return
     if args.cmd == "device-code-start":
         print(device_code_start(cfg).get("message", "OK"))
         return
     if args.cmd == "device-code-poll":
-        device_code_poll(cfg, args.device_code)
+        code = args.device_code
+        if not code:
+            device_file = cfg.tokens_path.with_name("device.json")
+            if not device_file.exists():
+                raise AuthError("Нет device.json — сначала login или device-code-start.")
+            code = json.loads(device_file.read_text())["device_code"]
+        device_code_poll(cfg, code)
         print("OK, токен сохранён в", cfg.tokens_path)
         return
 

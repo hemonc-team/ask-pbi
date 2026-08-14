@@ -29,6 +29,6 @@ fi
 
 echo ""
 echo "Готово. Дальше:"
-echo "  1) Device Code: $CLONE_DIR/scripts/pbi_run.sh device-code-start"
+echo "  1) Вход в Power BI: $CLONE_DIR/scripts/pbi_run.sh login"
 echo "  2) Upload bootstrap zip в Claude (см. references/SETUP_MARKETER.md)"
 echo "  3) Smoke: «Сколько лидов за месяц в leads_marketing?»"

@@ -22,7 +22,7 @@ Read-only. Только читает цифры из Power BI Service — не �
 
 ## Предпосылки
 
-- `{SKILL}/config/pbi_config.json` (из `pbi_config.example.json`) — локальный `~/.pbi/tokens.json` после Device Code под **своим** PBI Pro email.
+- `{SKILL}/config/pbi_config.json` (из `pbi_config.example.json`) — локальный `~/.pbi/tokens.json` после `pbi_run.sh login` под **своим** PBI Pro email.
 - `pip install requests`
 - Если конфиг/токен отсутствует → направь к `references/SETUP_MARKETER.md`, не угадывай секреты.
 
@@ -55,6 +55,6 @@ SKILL_ROOT=~/ask-pbi
 
 ## Ошибки
 
-- `invalid_grant` → повтор Device Code (SETUP §4).
+- `invalid_grant` / нет `tokens.json` → `{SKILL}/scripts/pbi_run.sh login` (SETUP §4).
 - HTTP 403 executeQueries → попроси разработчика включить tenant setting Semantic Model Execute Queries REST API.
 - Нет доступа к workspace → проверь Pro и membership в app.powerbi.com.
