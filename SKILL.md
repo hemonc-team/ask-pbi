@@ -8,68 +8,37 @@ dependencies: python>=3.10, requests
 
 # pbi-marketing-qa
 
-Read-only. Только читает цифры из Power BI Service — не меняет модели, не публикует, не refresh.
+Read-only. Цифры из Power BI через `{SKILL}/scripts/pbi_run.sh`. `{SKILL}` = `~/ask-pbi/`.
 
-Путь к skill на диске (после `install.sh`):
+**Cowork** + папка `~/ask-pbi` на компьютере. Не Chat, не cloud/`device_bash`. Ошибки → `references/TROUBLESHOOTING.md`.
 
-`~/ask-pbi/`
+## Быстрый путь (минимум команд)
 
-Обозначим `{SKILL}` = этот путь.
-
-## Где выполнять команды (обязательно)
-
-`pbi_run.sh` ходит в интернет (`api.powerbi.com`, `login.microsoftonline.com`) и читает локальный `~/.pbi/tokens.json`. Это работает **только на компьютере пользователя**.
-
-**Запрещено** запускать скрипты в cloud container / `device_bash` / VM-песочнице: там нет сети до Power BI и часто нет токена.
-
-**Запрещено** подменять этот skill: не `marketing-analysis`, не `powerbi-modeling-mcp` / XMLA, не другие репозитории (content-fabric и т.п.). Только `pbi_run.sh` из `~/ask-pbi`.
-
-Режим **Chat** в Claude не видит диск и не запускает `pbi_run.sh`. Нужен **Cowork** (или Code) **на этом компьютере**. Если сейчас Chat / нет файла `~/ask-pbi/SKILL.md` / нет bash на хосте:
-
-1. Остановись. Не выдумывай цифры.
-2. Попроси открыть **Cowork**, режим **на этом компьютере**, доступ к папке `~/ask-pbi`.
-3. Повтори тот же вопрос.
-
-## Когда применять
-
-Вопросы про метрики/цифры/тренды дашбордов: `leads_marketing`, `KPI marketing view`, `clinic_ops`, «лиды», «конверсия», «сколько за месяц» — даже без слова Power BI.
-
-## Предпосылки
-
-- `{SKILL}/config/pbi_config.json` (из `pbi_config.example.json`) — локальный `~/.pbi/tokens.json` после `pbi_run.sh login` под **своим** PBI Pro email.
-- `pip install requests`
-- Если конфиг/токен отсутствует → направь к `references/SETUP_MARKETER.md`, не угадывай секреты.
-
-## Команды (только через pbi_run.sh)
+1. Прочитай `references/workspaces.md` + `references/measures-cheatsheet.md`.
+2. Один раз за вопрос (или за сессию) — `resolve-dataset` по имени модели.
+3. `execute-dax` по рецепту из шпаргалки.
+4. `discover-schema` — **только** если меры нет в шпаргалке (кэш на диске, без колонок).
 
 ```bash
-SKILL_ROOT=~/ask-pbi
-"$SKILL_ROOT/scripts/pbi_run.sh" list-workspaces
-"$SKILL_ROOT/scripts/pbi_run.sh" list-datasets --group <ws_id>
-"$SKILL_ROOT/scripts/pbi_run.sh" discover-schema --group <ws_id> --dataset <ds_id>
-"$SKILL_ROOT/scripts/pbi_run.sh" execute-dax --group <ws_id> --dataset <ds_id> \
-  --query 'EVALUATE ROW("Ответ", [Имя меры])'
+SKILL=~/ask-pbi
+"$SKILL/scripts/pbi_run.sh" resolve-dataset --dataset leads_marketing --workspace "Входящий трафик"
+"$SKILL/scripts/pbi_run.sh" execute-dax --group <group_id> --dataset <dataset_id> --query '<DAX>'
+"$SKILL/scripts/pbi_run.sh" discover-schema --group <group_id> --dataset <dataset_id>
 ```
 
-Сначала смотри `{SKILL}/references/workspaces.md` и `measures-cheatsheet.md`. `discover-schema` — только если мера не найдена (не на каждый вопрос).
+`resolve-dataset` ищет модель по имени во всех доступных workspace (ID датасета не храним в git — меняется при publish).
 
-## Алгоритм ответа
+## Алгоритм
 
-1. Определи workspace/датасет (`references/workspaces.md` или один уточняющий вопрос).
-2. Сформулируй DAX, выполни `execute-dax`.
-3. Ответь простым языком с числом и периодом. Без сырого JSON/DAX, если не просили.
+1. Модель из вопроса или `workspaces.md` (синонимы).
+2. `resolve-dataset` → `group_id`, `dataset_id`.
+3. DAX из `measures-cheatsheet.md` или `discover-schema` (таблицы+меры, локальный кэш `~/.pbi/schema-cache/`).
+4. Ответ простым языком: число + период. Без сырого JSON/DAX.
 
 ## Запрещено
 
-Никогда не вызывай и не предлагай: `publish`, `export-pbix`, `refresh`, `set-user-role`, изменение мер/layout. Правки модели — только разработчик (репозиторий [`pbi-patch-factory`](https://github.com/hemonc-team/pbi-patch-factory)).
+`publish`, `export-pbix`, `refresh`, правки модели, другие skills/MCP (`marketing-analysis`, XMLA). Только этот skill.
 
-## Обновление skill из git
+## Обновление
 
-Пользователь: «обнови скилл» → `git -C ~/ask-pbi pull` → подтверди, что инструкции обновлены.
-
-## Ошибки
-
-- `invalid_grant` / нет `tokens.json` → `{SKILL}/scripts/pbi_run.sh login` (SETUP §4).
-- HTTP 403 executeQueries → попроси разработчика включить tenant setting Semantic Model Execute Queries REST API.
-- Нет доступа к workspace → проверь Pro и membership в app.powerbi.com.
-- Нет сети до Power BI / `device_bash` / cloud container → новый чат «на этом компьютере», см. § «Где выполнять команды».
+«Обнови скилл» → `git -C ~/ask-pbi pull`.

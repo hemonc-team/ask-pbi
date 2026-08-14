@@ -8,9 +8,10 @@
 |---|---|
 | `SKILL.md` | Полные инструкции для Claude (обновляются через git pull) |
 | `SKILL.bootstrap.md` | Loader для одноразового upload в Claude |
-| `scripts/pbi_run.sh` | Read-only REST-клиент |
-| `references/workspaces.md` | ID воркспейсов и синонимы |
-| `references/measures-cheatsheet.md` | Частые меры |
+| `scripts/pbi_run.sh` | Read-only REST; compact output; `resolve-dataset`; schema cache в `~/.pbi/schema-cache/` |
+| `references/workspaces.md` | Workspace ID + синонимы (dataset ID — через resolve) |
+| `references/measures-cheatsheet.md` | Меры + готовый DAX |
+| `references/TROUBLESHOOTING.md` | Ошибки Cowork/Chat/токен/кэш |
 
 ## Сборка zip для маркетологов
 

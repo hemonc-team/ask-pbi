@@ -3,7 +3,7 @@
 Read-only REST-клиент Power BI Service для marketing skill.
 
 Delegated OAuth (Device Code) под личным Pro-аккаунтом маркетолога.
-Только чтение: list workspaces/datasets/reports, discover-schema (INFO.*), execute-dax.
+Только чтение: list/resolve, discover-schema (INFO.*), execute-dax.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ MARKETING_SCOPES = (
     "https://analysis.windows.net/powerbi/api/Workspace.Read.All "
     "offline_access"
 )
+SCHEMA_CACHE_TTL_S = 7 * 86400
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -55,6 +57,10 @@ class Config:
         ).expanduser()
         return cls(tenant_id=tenant_id, client_id=client_id, tokens_path=tokens_path)
 
+    @property
+    def schema_cache_dir(self) -> Path:
+        return self.tokens_path.parent / "schema-cache"
+
 
 class AuthError(RuntimeError):
     pass
@@ -63,8 +69,8 @@ class AuthError(RuntimeError):
 def _load_tokens(cfg: Config) -> dict[str, Any]:
     if not cfg.tokens_path.exists():
         raise AuthError(
-            f"Нет {cfg.tokens_path}. Пройди device-code-start + device-code-poll "
-            "под своим PBI email (см. references/SETUP_MARKETER.md)."
+            f"Нет {cfg.tokens_path}. Запусти login под своим PBI email "
+            "(см. references/SETUP_MARKETER.md)."
         )
     return json.loads(cfg.tokens_path.read_text())
 
@@ -112,7 +118,6 @@ def device_code_poll(cfg: Config, device_code: str) -> dict[str, Any]:
 
 
 def device_code_wait(cfg: Config, start: dict[str, Any]) -> dict[str, Any]:
-    """Poll until the user finishes browser login (or the code expires)."""
     device_code = start["device_code"]
     interval = max(int(start.get("interval") or 5), 5)
     deadline = time.time() + int(start.get("expires_in") or 900)
@@ -160,7 +165,7 @@ def refresh_access_token(cfg: Config) -> dict[str, Any]:
     payload = r.json()
     if r.status_code != 200 or "access_token" not in payload:
         raise AuthError(
-            f"Refresh не удался: {payload}. При invalid_grant — повтори Device Code Flow."
+            f"Refresh не удался: {payload}. При invalid_grant — повтори login."
         )
     _save_tokens(cfg, payload)
     return payload
@@ -173,6 +178,24 @@ def get_valid_token(cfg: Config, margin_s: int = 120) -> str:
     if saved_at and expires_in and (time.time() - saved_at) < (expires_in - margin_s):
         return tokens["access_token"]
     return refresh_access_token(cfg)["access_token"]
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", s.casefold())
+
+
+def _row_get(row: dict[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if k in row:
+            return row[k]
+        bracket = f"[{k}]"
+        if bracket in row:
+            return row[bracket]
+    return None
+
+
+def _dax_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return result.get("results", [{}])[0].get("tables", [{}])[0].get("rows", [])
 
 
 class PBIClient:
@@ -215,21 +238,153 @@ class PBIClient:
             )
         return r.json()
 
-    def discover_schema(self, group_id: str, dataset_id: str) -> dict[str, list[dict]]:
-        out = {}
-        for name, query in (
-            ("tables", "EVALUATE INFO.TABLES()"),
-            ("measures", "EVALUATE INFO.MEASURES()"),
-            ("columns", "EVALUATE INFO.COLUMNS()"),
-            ("relationships", "EVALUATE INFO.RELATIONSHIPS()"),
-        ):
+    def resolve_dataset(
+        self, dataset_name: str, workspace_hint: Optional[str] = None
+    ) -> dict[str, str]:
+        target = _norm(dataset_name)
+        workspaces = self.list_workspaces()
+        if workspace_hint:
+            wh = _norm(workspace_hint)
+            workspaces = [
+                w
+                for w in workspaces
+                if wh in _norm(w.get("name", "")) or _norm(w.get("name", "")) in wh
+            ] or workspaces
+        for ws in workspaces:
+            gid = ws["id"]
+            for ds in self.list_datasets(gid):
+                if _norm(ds.get("name", "")) == target:
+                    return {
+                        "workspace": ws.get("name", ""),
+                        "group_id": gid,
+                        "dataset": ds.get("name", ""),
+                        "dataset_id": ds["id"],
+                    }
+        raise RuntimeError(
+            f"Датасет «{dataset_name}» не найден"
+            + (f" в workspace «{workspace_hint}»" if workspace_hint else "")
+            + ". Проверь доступ в app.powerbi.com."
+        )
+
+    def _schema_cache_path(self, group_id: str, dataset_id: str) -> Path:
+        return self.cfg.schema_cache_dir / f"{group_id}_{dataset_id}.json"
+
+    def _load_schema_cache(self, group_id: str, dataset_id: str) -> Optional[dict]:
+        path = self._schema_cache_path(group_id, dataset_id)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        if time.time() - data.get("_cached_at", 0) > SCHEMA_CACHE_TTL_S:
+            return None
+        return data
+
+    def _save_schema_cache(
+        self, group_id: str, dataset_id: str, schema: dict[str, Any]
+    ) -> None:
+        self.cfg.schema_cache_dir.mkdir(parents=True, exist_ok=True)
+        payload = dict(schema)
+        payload["_cached_at"] = int(time.time())
+        path = self._schema_cache_path(group_id, dataset_id)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+
+    def discover_schema(
+        self,
+        group_id: str,
+        dataset_id: str,
+        *,
+        scope: str = "measures",
+        use_cache: bool = True,
+        write_cache: bool = True,
+    ) -> dict[str, Any]:
+        if use_cache:
+            cached = self._load_schema_cache(group_id, dataset_id)
+            if cached is not None:
+                return cached
+        queries: tuple[tuple[str, str], ...]
+        if scope == "full":
+            queries = (
+                ("tables", "EVALUATE INFO.TABLES()"),
+                ("measures", "EVALUATE INFO.MEASURES()"),
+                ("columns", "EVALUATE INFO.COLUMNS()"),
+                ("relationships", "EVALUATE INFO.RELATIONSHIPS()"),
+            )
+        else:
+            queries = (
+                ("tables", "EVALUATE INFO.TABLES()"),
+                ("measures", "EVALUATE INFO.MEASURES()"),
+            )
+        out: dict[str, Any] = {"scope": scope}
+        for name, query in queries:
             result = self.execute_dax(group_id, dataset_id, query)
-            out[name] = result["results"][0]["tables"][0]["rows"]
+            out[name] = _dax_rows(result)
+        if write_cache:
+            self._save_schema_cache(group_id, dataset_id, out)
         return out
 
 
-def _print(obj: Any) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
+def _print_workspaces(items: list[dict]) -> None:
+    for w in items:
+        print(f"{w.get('name', '?')}\t{w.get('id', '')}")
+
+
+def _print_datasets(items: list[dict]) -> None:
+    for d in items:
+        print(f"{d.get('name', '?')}\t{d.get('id', '')}")
+
+
+def _print_reports(items: list[dict]) -> None:
+    for r in items:
+        ds = r.get("datasetId", "")
+        print(f"{r.get('name', '?')}\t{r.get('id', '')}\tdataset={ds}")
+
+
+def _print_resolve(res: dict[str, str]) -> None:
+    print(
+        f"workspace={res['workspace']}\n"
+        f"group_id={res['group_id']}\n"
+        f"dataset={res['dataset']}\n"
+        f"dataset_id={res['dataset_id']}"
+    )
+
+
+def _print_dax_result(result: dict[str, Any]) -> None:
+    rows = _dax_rows(result)
+    if not rows:
+        print("(пусто)")
+        return
+    if len(rows) == 1 and len(rows[0]) <= 4:
+        for k, v in rows[0].items():
+            print(f"{k}\t{v}")
+        return
+    cols: list[str] = []
+    for row in rows:
+        for k in row:
+            if k not in cols:
+                cols.append(k)
+    print("\t".join(cols))
+    for row in rows:
+        print("\t".join(str(row.get(c, "")) for c in cols))
+
+
+def _print_schema(schema: dict[str, Any]) -> None:
+    cached = schema.get("_cached_at")
+    if cached:
+        age_h = int((time.time() - cached) / 3600)
+        print(f"# cache age {age_h}h scope={schema.get('scope', '?')}")
+    measures = schema.get("measures") or []
+    print(f"# measures: {len(measures)}")
+    for row in measures:
+        table = _row_get(row, "TableName", "TABLE_NAME") or "?"
+        name = _row_get(row, "Name", "MEASURE_NAME", "MeasureName") or "?"
+        print(f"{table}\t{name}")
+    tables = schema.get("tables") or []
+    if tables:
+        print(f"# tables: {len(tables)}")
+        for row in tables[:40]:
+            name = _row_get(row, "Name", "TABLE_NAME") or "?"
+            print(f"table\t{name}")
+        if len(tables) > 40:
+            print(f"# … ещё {len(tables) - 40} таблиц")
 
 
 def main() -> None:
@@ -239,20 +394,27 @@ def main() -> None:
     sub.add_parser("login", help="Один шаг: ссылка в браузере + ожидание входа")
     sub.add_parser("device-code-start")
     sp = sub.add_parser("device-code-poll")
-    sp.add_argument(
-        "--device-code",
-        default=None,
-        help="Если не указан — берётся из ~/.pbi/device.json",
-    )
+    sp.add_argument("--device-code", default=None)
     sub.add_parser("token")
     sub.add_parser("list-workspaces")
     sp = sub.add_parser("list-datasets")
     sp.add_argument("--group", required=True)
     sp = sub.add_parser("list-reports")
     sp.add_argument("--group", required=True)
+    sp = sub.add_parser("resolve-dataset")
+    sp.add_argument("--dataset", required=True, help="Имя semantic model, напр. leads_marketing")
+    sp.add_argument("--workspace", default=None, help="Подсказка: Входящий трафик / KPI Team")
     sp = sub.add_parser("discover-schema")
     sp.add_argument("--group", required=True)
     sp.add_argument("--dataset", required=True)
+    sp.add_argument(
+        "--scope",
+        choices=("measures", "full"),
+        default="measures",
+        help="measures = таблицы+меры (по умолчанию); full = + колонки+связи",
+    )
+    sp.add_argument("--no-cache", action="store_true", help="Не читать локальный кэш")
+    sp.add_argument("--refresh-cache", action="store_true", help="Перезаписать кэш")
     sp = sub.add_parser("execute-dax")
     sp.add_argument("--group", required=True)
     sp.add_argument("--dataset", required=True)
@@ -276,7 +438,7 @@ def main() -> None:
         if not code:
             device_file = cfg.tokens_path.with_name("device.json")
             if not device_file.exists():
-                raise AuthError("Нет device.json — сначала login или device-code-start.")
+                raise AuthError("Нет device.json — сначала login.")
             code = json.loads(device_file.read_text())["device_code"]
         device_code_poll(cfg, code)
         print("OK, токен сохранён в", cfg.tokens_path)
@@ -286,15 +448,24 @@ def main() -> None:
     if args.cmd == "token":
         print(get_valid_token(cfg))
     elif args.cmd == "list-workspaces":
-        _print(client.list_workspaces())
+        _print_workspaces(client.list_workspaces())
     elif args.cmd == "list-datasets":
-        _print(client.list_datasets(args.group))
+        _print_datasets(client.list_datasets(args.group))
     elif args.cmd == "list-reports":
-        _print(client.list_reports(args.group))
+        _print_reports(client.list_reports(args.group))
+    elif args.cmd == "resolve-dataset":
+        _print_resolve(client.resolve_dataset(args.dataset, args.workspace))
     elif args.cmd == "discover-schema":
-        _print(client.discover_schema(args.group, args.dataset))
+        schema = client.discover_schema(
+            args.group,
+            args.dataset,
+            scope=args.scope,
+            use_cache=not args.no_cache and not args.refresh_cache,
+            write_cache=True,
+        )
+        _print_schema(schema)
     elif args.cmd == "execute-dax":
-        _print(client.execute_dax(args.group, args.dataset, args.query))
+        _print_dax_result(client.execute_dax(args.group, args.dataset, args.query))
 
 
 if __name__ == "__main__":
