@@ -1,68 +1,51 @@
-# Установка pbi-marketing-qa (маркетолог)
+# Установка (подробная версия)
 
-~20 минут, один раз. Нужны: Mac, Claude Desktop (Free или Pro), Power BI Pro на вашем рабочем email.
+Краткая инструкция для маркетологов — в **[README.md](../README.md)** в корне репозитория.
+
+Ниже — те же шаги с полными командами для отладки.
 
 ## 1. Claude Desktop
 
-1. Скачайте [claude.com/download](https://claude.com/download).
-2. Войдите **своим** аккаунтом.
-3. В Settings включите **code execution**, если спросит.
+1. [claude.com/download](https://claude.com/download)
+2. Свой аккаунт, code execution включён.
 
-## 2. Git + skill из репозитория
-
-Разработчик выдаст read-only доступ к репозиторию:
+## 2. Клон репозитория
 
 ```bash
 git clone https://github.com/hemonc-team/ask-pbi.git ~/ask-pbi
 bash ~/ask-pbi/install.sh
 ```
 
-Или обновление существующего клона:
-
-```bash
-git -C ~/ask-pbi pull
-```
-
-## 3. Python
+## 3. Python (если install.sh не поставил)
 
 ```bash
 pip3 install requests --user
-# или: pip3 install requests --break-system-packages
 ```
 
-## 4. Power BI — вход один раз (Device Code)
+## 4. Power BI — Device Code (один раз)
 
 ```bash
 SKILL=~/ask-pbi
 cp "$SKILL/config/pbi_config.example.json" "$SKILL/config/pbi_config.json"
-# при необходимости поправьте tokens_path в pbi_config.json
 
 "$SKILL/scripts/pbi_run.sh" device-code-start
-# откройте ссылку, войдите СВОИМ рабочим email (тот, у кого Pro)
-"$SKILL/scripts/pbi_run.sh" device-code-poll --device-code <код из ~/.pbi/device.json>
+# ссылка в браузере → рабочий email
+"$SKILL/scripts/pbi_run.sh" device-code-poll --device-code <код>
 "$SKILL/scripts/pbi_run.sh" list-workspaces
 ```
 
-## 5. Bootstrap skill в Claude (один раз)
+## 5. Bootstrap в Claude
 
-1. Customize → Skills → Upload.
-2. Заархивируйте zip из `dist/pbi-marketing-qa-bootstrap.zip` (даёт разработчик после `bash scripts/package.sh`).
-3. Либо вручную: zip с одним файлом `SKILL.md` = содержимое `SKILL.bootstrap.md` (имя папки в zip: `pbi-marketing-qa`).
+Upload `dist/pbi-marketing-qa-bootstrap.zip` (собирает разработчик: `bash scripts/package.sh`).
 
-## 6. Проверка
+## 6. Smoke
 
-Спросите Claude: «Сколько свежих контактов за последний месяц в leads_marketing?»
+«Сколько свежих контактов за последний месяц в leads_marketing?»
 
-## Обновления
-
-Напишите Claude: **«обнови скилл»** — он выполнит `git pull` в `~/ask-pbi`.
-
-## Если сломалось
+## Ошибки
 
 | Симптом | Действие |
 |---|---|
-| `invalid_grant` | Повторите §4 (Device Code) |
-| Нет workspace в списке | Попросите доступ в app.powerbi.com |
-| `executeQueries` 403 | Разработчик включает tenant setting (не вы) |
-
-Правки моделей/мер — не через skill, а через разработчика ([`pbi-patch-factory`](https://github.com/hemonc-team/pbi-patch-factory)).
+| `invalid_grant` | Повтор §4 |
+| Нет workspace | Доступ в app.powerbi.com |
+| `executeQueries` 403 | Tenant setting — dev (см. PBI_ADMIN_CHECKLIST в pbi-patch-factory) |

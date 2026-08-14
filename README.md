@@ -1,35 +1,108 @@
-# ask-pbi
+# Вопросы к дашбордам через Claude
 
-Claude Desktop skill для маркетологов: read-only вопросы к Power BI Service (лиды, KPI, конверсия) через DAX.
+Claude на вашем Mac может отвечать на вопросы по цифрам из Power BI — лиды, KPI, конверсия — обычным языком, без ручного копания в отчётах.
 
-Dev-контур (патч `.pbix`, Service Principal, публикация) — отдельный репозиторий [`pbi-patch-factory`](https://github.com/hemonc-team/pbi-patch-factory).
+**Claude только читает данные.** Он не меняет отчёты и не публикует ничего в Power BI.
 
-## Быстрый старт (маркетолог)
+---
+
+## Что нужно
+
+- Mac
+- [Claude Desktop](https://claude.com/download) (Free или Pro — на ваш личный аккаунт)
+- Доступ к Power BI на **вашем рабочем email** (тот же, что в app.powerbi.com)
+- Доступ к этому репозиторию (выдаёт разработчик)
+
+---
+
+## Установка один раз (~15 минут)
+
+### 1. Claude Desktop
+
+1. Установите Claude, если ещё нет.
+2. Войдите **своим** аккаунтом.
+3. В настройках включите **выполнение кода** (code execution), если приложение спросит.
+
+### 2. Скачать файлы помощника
+
+Откройте **Терминал** (Программы → Утилиты → Terminal) и вставьте:
 
 ```bash
 git clone https://github.com/hemonc-team/ask-pbi.git ~/ask-pbi
 bash ~/ask-pbi/install.sh
 ```
 
-Подробно: [`references/SETUP_MARKETER.md`](references/SETUP_MARKETER.md).
-
-## Структура
-
-| Путь | Назначение |
-|---|---|
-| `SKILL.md` | Полные инструкции для Claude (в git, обновляются через pull) |
-| `SKILL.bootstrap.md` | Тонкий loader для одноразового upload в Claude |
-| `scripts/pbi_run.sh` | Обёртка read-only REST-клиента |
-| `references/` | Воркспейсы, шпаргалка мер, онбординг |
-
-## Сборка zip для Claude
+Если папка уже есть — для обновления достаточно:
 
 ```bash
-bash scripts/package.sh
-# → dist/pbi-marketing-qa-bootstrap.zip (upload once)
-# → dist/pbi-marketing-qa.zip (fallback без git)
+git -C ~/ask-pbi pull
 ```
 
-## Обновление у маркетологов
+### 3. Один раз войти в Power BI
 
-«Обнови скилл» в Claude → `git -C ~/ask-pbi pull`.
+В том же Терминале:
+
+```bash
+~/ask-pbi/scripts/pbi_run.sh device-code-start
+```
+
+1. Появится **ссылка** — откройте её в браузере.
+2. Войдите **рабочим email**, под которым заходите в Power BI.
+3. Скопируйте код из сообщения в терминале и выполните (подставьте свой код вместо `XXXX`):
+
+```bash
+~/ask-pbi/scripts/pbi_run.sh device-code-poll --device-code XXXX
+```
+
+4. Проверка — должен появиться список ваших рабочих областей:
+
+```bash
+~/ask-pbi/scripts/pbi_run.sh list-workspaces
+```
+
+### 4. Подключить навык в Claude (один раз)
+
+1. В Claude: **Customize → Skills → Upload**.
+2. Загрузите файл **`pbi-marketing-qa-bootstrap.zip`** — его пришлёт разработчик.
+3. Готово.
+
+---
+
+## Как пользоваться каждый день
+
+Просто спросите Claude, как коллегу:
+
+- «Сколько свежих контактов за последний месяц в leads_marketing?»
+- «Какая конверсия fresh contact за квартал?»
+- «Сколько лидов в KPI marketing за прошлую неделю?»
+
+Можно без слов «Power BI» и «дашборд» — Claude поймёт по смыслу.
+
+---
+
+## Обновления
+
+Напишите Claude: **«обнови скилл»** — он сам подтянет свежие инструкции.
+
+Или в Терминале:
+
+```bash
+git -C ~/ask-pbi pull
+```
+
+---
+
+## Если что-то не работает
+
+| Что видите | Что сделать |
+|---|---|
+| Claude не находит цифры | Проверьте, что навык загружен (шаг 4) |
+| «Нет доступа» к отчёту | Зайдите в app.powerbi.com — если отчёта нет и там, попросите доступ у админа |
+| Сессия Power BI истекла | Повторите шаг 3 (вход по ссылке) |
+| Нужна новая мера или правка отчёта | Это не через Claude — напишите разработчику |
+
+---
+
+## Для разработчиков
+
+Техническая документация: [`references/FOR_DEVELOPERS.md`](references/FOR_DEVELOPERS.md).
