@@ -88,6 +88,7 @@ def device_code_start(cfg: Config) -> dict[str, Any]:
     )
     r.raise_for_status()
     payload = r.json()
+    cfg.tokens_path.parent.mkdir(parents=True, exist_ok=True)
     device_file = cfg.tokens_path.with_name("device.json")
     device_file.write_text(json.dumps(payload, indent=2))
     return payload

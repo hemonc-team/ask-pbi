@@ -14,6 +14,7 @@ else
 fi
 
 chmod +x "$CLONE_DIR/scripts/pbi_run.sh"
+mkdir -p "${HOME}/.pbi"
 
 echo "==> config/pbi_config.json"
 if [[ ! -f "$CLONE_DIR/config/pbi_config.json" ]]; then
