@@ -16,6 +16,18 @@ Read-only. Только читает цифры из Power BI Service — не �
 
 Обозначим `{SKILL}` = этот путь.
 
+## Где выполнять команды (обязательно)
+
+`pbi_run.sh` ходит в интернет (`api.powerbi.com`, `login.microsoftonline.com`) и читает локальный `~/.pbi/tokens.json`. Это работает **только на компьютере пользователя**.
+
+**Запрещено** запускать скрипты в cloud container / `device_bash` / VM-песочнице: там нет сети до Power BI и часто нет токена.
+
+Если bash без интернета или нет `tokens.json` при том, что пользователь уже входил:
+
+1. Остановись. Не выдумывай цифры.
+2. Попроси **новый чат** с режимом **«на этом компьютере» / On your computer** (не облако).
+3. Повтори тот же вопрос.
+
 ## Когда применять
 
 Вопросы про метрики/цифры/тренды дашбордов: `leads_marketing`, `KPI marketing view`, `clinic_ops`, «лиды», «конверсия», «сколько за месяц» — даже без слова Power BI.
@@ -58,3 +70,4 @@ SKILL_ROOT=~/ask-pbi
 - `invalid_grant` / нет `tokens.json` → `{SKILL}/scripts/pbi_run.sh login` (SETUP §4).
 - HTTP 403 executeQueries → попроси разработчика включить tenant setting Semantic Model Execute Queries REST API.
 - Нет доступа к workspace → проверь Pro и membership в app.powerbi.com.
+- Нет сети до Power BI / `device_bash` / cloud container → новый чат «на этом компьютере», см. § «Где выполнять команды».
