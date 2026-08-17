@@ -14,10 +14,12 @@ Read-only. Цифры из Power BI через `{SKILL}/scripts/pbi_run.sh`. `{S
 
 ## Быстрый путь (минимум команд)
 
-1. Прочитай `references/workspaces.md` + `references/measures-cheatsheet.md`.
+1. Прочитай `references/workspaces.md` + `references/measures-cheatsheet.md` + `references/known-fields.md`.
 2. Один раз за вопрос (или за сессию) — `resolve-dataset` по имени модели.
 3. `execute-dax` по рецепту из шпаргалки.
 4. `discover-schema` — **только** если меры нет в шпаргалке (кэш на диске, без колонок).
+5. Нашёл неочевидную ловушку/join (пустое поле, ID не там где ожидалось, таблица в
+   другом датасете)? Допиши находку в `references/known-fields.md`, не держи в контексте одной сессии.
 
 ```bash
 SKILL=~/ask-pbi
