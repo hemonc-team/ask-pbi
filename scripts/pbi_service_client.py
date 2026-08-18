@@ -34,6 +34,10 @@ MARKETING_SCOPES = (
 )
 SCHEMA_CACHE_TTL_S = 7 * 86400
 
+# Датасеты вне периметра этого skill независимо от workspace/dataset_id
+# (id меняется при publish, имя — нет). Сверяется по нормализованному имени.
+RESTRICTED_DATASET_NAMES = {"leadsmarketing", "clinicops"}
+
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.environ.get(name, default)
@@ -218,13 +222,34 @@ class PBIClient:
     def list_workspaces(self) -> list[dict]:
         return self._get("/groups").get("value", [])
 
-    def list_datasets(self, group_id: str) -> list[dict]:
+    def _list_datasets_raw(self, group_id: str) -> list[dict]:
+        """Неотфильтрованный список — только для внутренних проверок доступа.
+        Не отдавать наружу (используй list_datasets)."""
         return self._get(f"/groups/{group_id}/datasets").get("value", [])
+
+    def list_datasets(self, group_id: str) -> list[dict]:
+        items = self._list_datasets_raw(group_id)
+        return [d for d in items if _norm(d.get("name", "")) not in RESTRICTED_DATASET_NAMES]
 
     def list_reports(self, group_id: str) -> list[dict]:
         return self._get(f"/groups/{group_id}/reports").get("value", [])
 
+    def _dataset_name_for(self, group_id: str, dataset_id: str) -> Optional[str]:
+        for ds in self._list_datasets_raw(group_id):
+            if ds.get("id") == dataset_id:
+                return ds.get("name", "")
+        return None
+
+    def _assert_dataset_allowed(self, group_id: str, dataset_id: str) -> None:
+        name = self._dataset_name_for(group_id, dataset_id)
+        if name and _norm(name) in RESTRICTED_DATASET_NAMES:
+            raise RuntimeError(
+                f"Датасет «{name}» вне периметра этого skill "
+                "(см. references/workspaces.md)."
+            )
+
     def execute_dax(self, group_id: str, dataset_id: str, query: str) -> dict:
+        self._assert_dataset_allowed(group_id, dataset_id)
         body = {
             "queries": [{"query": query}],
             "serializerSettings": {"includeNulls": True},
@@ -242,6 +267,11 @@ class PBIClient:
         self, dataset_name: str, workspace_hint: Optional[str] = None
     ) -> dict[str, str]:
         target = _norm(dataset_name)
+        if target in RESTRICTED_DATASET_NAMES:
+            raise RuntimeError(
+                f"Датасет «{dataset_name}» вне периметра этого skill "
+                "(см. references/workspaces.md)."
+            )
         workspaces = self.list_workspaces()
         if workspace_hint:
             wh = _norm(workspace_hint)
@@ -296,6 +326,7 @@ class PBIClient:
         use_cache: bool = True,
         write_cache: bool = True,
     ) -> dict[str, Any]:
+        self._assert_dataset_allowed(group_id, dataset_id)
         if use_cache:
             cached = self._load_schema_cache(group_id, dataset_id)
             if cached is not None:
