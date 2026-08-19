@@ -6,8 +6,8 @@ Dev (патч `.pbix`, publish) — [`pbi-patch-factory`](https://github.com/hem
 
 ## Архитектура
 
-HTTP MCP на DWH (`ASKPBI_TRANSPORT=http`, `https://n8n.hemonc.ru/mcp`).
-Claude у маркетолога ходит туда по Bearer. На DWH — Service Principal в Power BI.
+HTTP MCP на DWH (`https://pbi.hemonc.ru/mcp`). Claude ходит туда с ключом
+(Bearer). На DWH — Service Principal в Power BI.
 
 LLM никогда не пишет DAX: только `get_available_metrics` / `get_metric_value` /
 `analyze_trend`. Python сам собирает запрос по шаблону.
@@ -59,3 +59,38 @@ LLM никогда не пишет DAX: только `get_available_metrics` / `
 - `KPI team admin view` и `KPI medicine view` почти не разобраны; подтверждены
   те же три меры, что и на marketing view, плюс посетители сайта только на
   marketing view. См. `metrics-registry.md`.
+
+## Развёртывание на DWH
+
+Каталог `/opt/ask-pbi`, отдельно от `/opt/clinic-dwh`. Секреты только в
+`.env` (`chmod 600`), шаблон — `.env.example`. Ключ для маркетологов —
+`ASKPBI_MCP_TOKEN` (раздаётся вручную, не в git).
+
+Первый раз:
+
+```bash
+rsync -az --exclude '.git/' --exclude 'venv/' --exclude '.env' --exclude 'var/' \
+  ./ root@62.113.60.133:/opt/ask-pbi/
+ssh root@62.113.60.133 'chmod 600 /opt/ask-pbi/.env; cd /opt/ask-pbi && ./deploy/install_linux.sh'
+```
+
+Сертификат для `pbi.hemonc.ru` (после DNS A на IP сервера):
+
+```bash
+certbot certonly --nginx -d pbi.hemonc.ru
+```
+
+Обновление кода:
+
+```bash
+rsync -az --exclude '.git/' --exclude 'venv/' --exclude '.env' --exclude 'var/' \
+  ./ root@62.113.60.133:/opt/ask-pbi/
+ssh root@62.113.60.133 'cd /opt/ask-pbi && ./venv/bin/pip install -q -r requirements.txt && systemctl restart ask-pbi'
+```
+
+Проверка: `curl http://127.0.0.1:8100/health`, `python3 -m mcp_server.smoke_test`.
+Снаружи `/mcp` без ключа → 401.
+
+После смены домена на проде обновить в `.env`: `ASKPBI_PUBLIC_URL=https://pbi.hemonc.ru/mcp`
+и перезапустить `ask-pbi`. Маркетологам — новая команда `claude mcp add` с новым URL
+(ключ тот же, если не меняли).

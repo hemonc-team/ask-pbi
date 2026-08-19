@@ -7,8 +7,8 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
 SERVICE_SRC="$PROJECT_DIR/deploy/ask-pbi.service"
-NGINX_SRC="$PROJECT_DIR/deploy/nginx-n8n.hemonc.ru.conf"
-NGINX_SITE="/etc/nginx/sites-available/n8n.hemonc.ru"
+NGINX_SRC="$PROJECT_DIR/deploy/nginx-pbi.hemonc.ru.conf"
+NGINX_SITE="/etc/nginx/sites-available/pbi.hemonc.ru"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Нет $ENV_FILE — сначала положи секреты (см. .env.example)."
@@ -34,15 +34,19 @@ systemctl daemon-reload
 systemctl enable --now ask-pbi
 systemctl restart ask-pbi
 
+if [[ ! -f /etc/letsencrypt/live/pbi.hemonc.ru/fullchain.pem ]]; then
+  echo "Нет TLS-сертификата для pbi.hemonc.ru."
+  echo "Сначала: DNS A → этот сервер, затем:"
+  echo "  certbot certonly --webroot -w /var/www/html -d pbi.hemonc.ru"
+  exit 1
+fi
+
 cp "$NGINX_SRC" "$NGINX_SITE"
-ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/n8n.hemonc.ru
-rm -f /etc/nginx/sites-enabled/dwh-monitor /etc/nginx/sites-enabled/default
-rm -f /etc/nginx/sites-available/dwh-monitor
-rm -f /etc/nginx/sites-available/dwh-monitor.bak.20260724190438
+ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/pbi.hemonc.ru
 
 nginx -t
 systemctl reload nginx
 
 echo "ask-pbi: $(systemctl is-active ask-pbi)"
 echo "health:  curl -sS http://127.0.0.1:8100/health"
-echo "mcp:     https://n8n.hemonc.ru/mcp"
+echo "mcp:     https://pbi.hemonc.ru/mcp"

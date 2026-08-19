@@ -29,7 +29,7 @@ def build_http_auth() -> tuple[Optional[AuthSettings], Optional[StaticBearerVeri
     token = os.environ.get("ASKPBI_MCP_TOKEN", "").strip()
     if not token:
         return None, None
-    public = os.environ.get("ASKPBI_PUBLIC_URL", "https://n8n.hemonc.ru/mcp").rstrip("/")
+    public = os.environ.get("ASKPBI_PUBLIC_URL", "https://pbi.hemonc.ru/mcp").rstrip("/")
     issuer = public.rsplit("/mcp", 1)[0] or public
     auth = AuthSettings(
         issuer_url=issuer,
