@@ -1,0 +1,16 @@
+[Unit]
+Description=ask-pbi MCP (Power BI, Streamable HTTP)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ask-pbi
+EnvironmentFile=/opt/ask-pbi/.env
+ExecStart=/opt/ask-pbi/venv/bin/python -m mcp_server.server
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

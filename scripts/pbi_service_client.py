@@ -2,7 +2,10 @@
 """
 Read-only REST-клиент Power BI Service для marketing skill.
 
-Delegated OAuth (Device Code) под личным Pro-аккаунтом маркетолога.
+Два режима входа (PBI_AUTH_MODE):
+- delegated — Device Code под личным Pro-аккаунтом, токен в tokens_path.
+- service_principal — client_credentials (PBI_CLIENT_SECRET), для HTTP MCP на DWH.
+
 Только чтение: list/resolve, discover-schema (INFO.*), execute-dax.
 """
 
@@ -26,6 +29,7 @@ except ImportError:
 
 AUTHORITY = "https://login.microsoftonline.com"
 PBI_API = "https://api.powerbi.com/v1.0/myorg"
+PBI_APP_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 MARKETING_SCOPES = (
     "https://analysis.windows.net/powerbi/api/Dataset.Read.All "
     "https://analysis.windows.net/powerbi/api/Report.Read.All "
@@ -53,11 +57,20 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.environ.get(name, default)
 
 
+def _normalize_auth_mode(raw: Optional[str]) -> str:
+    mode = (raw or "delegated").strip().lower()
+    if mode in ("sp", "service_principal", "client_credentials"):
+        return "service_principal"
+    return "delegated"
+
+
 @dataclass
 class Config:
     tenant_id: str
     client_id: str
     tokens_path: Path
+    auth_mode: str = "delegated"
+    client_secret: Optional[str] = None
 
     @classmethod
     def load(cls) -> "Config":
@@ -66,10 +79,23 @@ class Config:
         if not tenant_id or not client_id:
             sys.stderr.write("ERROR: нужны PBI_TENANT_ID и PBI_CLIENT_ID\n")
             sys.exit(2)
+        auth_mode = _normalize_auth_mode(_env("PBI_AUTH_MODE"))
+        client_secret = _env("PBI_CLIENT_SECRET")
+        if auth_mode == "service_principal" and not client_secret:
+            sys.stderr.write(
+                "ERROR: PBI_AUTH_MODE=service_principal требует PBI_CLIENT_SECRET\n"
+            )
+            sys.exit(2)
         tokens_path = Path(
             _env("PBI_TOKENS_PATH", str(Path.home() / ".pbi" / "tokens.json"))
         ).expanduser()
-        return cls(tenant_id=tenant_id, client_id=client_id, tokens_path=tokens_path)
+        return cls(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            tokens_path=tokens_path,
+            auth_mode=auth_mode,
+            client_secret=client_secret,
+        )
 
     @property
     def schema_cache_dir(self) -> Path:
@@ -83,8 +109,8 @@ class AuthError(RuntimeError):
 def _load_tokens(cfg: Config) -> dict[str, Any]:
     if not cfg.tokens_path.exists():
         raise AuthError(
-            f"Нет {cfg.tokens_path}. Запусти login под своим PBI email "
-            "(см. references/SETUP_MARKETER.md)."
+            f"Нет {cfg.tokens_path}. Для локальной разработки: scripts/pbi_run.sh login. "
+            "На проде нужен PBI_AUTH_MODE=service_principal."
         )
     return json.loads(cfg.tokens_path.read_text())
 
@@ -172,25 +198,64 @@ def refresh_access_token(cfg: Config) -> dict[str, Any]:
             "client_id": cfg.client_id,
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "scope": "https://analysis.windows.net/powerbi/api/.default offline_access",
+            "scope": f"{PBI_APP_SCOPE} offline_access",
         },
         timeout=30,
     )
     payload = r.json()
     if r.status_code != 200 or "access_token" not in payload:
         raise AuthError(
-            f"Refresh не удался: {payload}. При invalid_grant — повтори login."
+            f"Refresh не удался: {payload.get('error')}. При invalid_grant — повтори login."
         )
     _save_tokens(cfg, payload)
     return payload
 
 
-def get_valid_token(cfg: Config, margin_s: int = 120) -> str:
-    tokens = _load_tokens(cfg)
+def acquire_sp_token(cfg: Config) -> dict[str, Any]:
+    if not cfg.client_secret:
+        raise AuthError("Нет PBI_CLIENT_SECRET для service_principal.")
+    r = requests.post(
+        f"{AUTHORITY}/{cfg.tenant_id}/oauth2/v2.0/token",
+        data={
+            "client_id": cfg.client_id,
+            "client_secret": cfg.client_secret,
+            "grant_type": "client_credentials",
+            "scope": PBI_APP_SCOPE,
+        },
+        timeout=30,
+    )
+    payload = r.json()
+    if r.status_code != 200 or "access_token" not in payload:
+        err = payload.get("error")
+        desc = str(payload.get("error_description") or "")[:180]
+        raise AuthError(f"SP token не получен: {err} {desc}".strip())
+    _save_tokens(cfg, payload)
+    return payload
+
+
+def _cached_access_token(cfg: Config, margin_s: int) -> Optional[str]:
+    if not cfg.tokens_path.exists():
+        return None
+    tokens = json.loads(cfg.tokens_path.read_text())
     saved_at = tokens.get("_saved_at", 0)
     expires_in = tokens.get("expires_in", 0)
-    if saved_at and expires_in and (time.time() - saved_at) < (expires_in - margin_s):
-        return tokens["access_token"]
+    access = tokens.get("access_token")
+    if (
+        access
+        and saved_at
+        and expires_in
+        and (time.time() - saved_at) < (expires_in - margin_s)
+    ):
+        return access
+    return None
+
+
+def get_valid_token(cfg: Config, margin_s: int = 120) -> str:
+    cached = _cached_access_token(cfg, margin_s)
+    if cached:
+        return cached
+    if cfg.auth_mode == "service_principal":
+        return acquire_sp_token(cfg)["access_token"]
     return refresh_access_token(cfg)["access_token"]
 
 
@@ -341,18 +406,22 @@ class PBIClient:
             cached = self._load_schema_cache(group_id, dataset_id)
             if cached is not None:
                 return cached
+        # Классические INFO.TABLES()/INFO.MEASURES()/... падают с
+        # AnalysisServicesErrorCode 3239575574 (HTTP 400) через REST executeQueries
+        # даже при выданном Build permission — подтверждено живым тестом 2026-08-19.
+        # Рабочая замена — INFO.VIEW.* (тот же справочник, другой DAX-синтаксис).
         queries: tuple[tuple[str, str], ...]
         if scope == "full":
             queries = (
-                ("tables", "EVALUATE INFO.TABLES()"),
-                ("measures", "EVALUATE INFO.MEASURES()"),
-                ("columns", "EVALUATE INFO.COLUMNS()"),
-                ("relationships", "EVALUATE INFO.RELATIONSHIPS()"),
+                ("tables", "EVALUATE INFO.VIEW.TABLES()"),
+                ("measures", "EVALUATE INFO.VIEW.MEASURES()"),
+                ("columns", "EVALUATE INFO.VIEW.COLUMNS()"),
+                ("relationships", "EVALUATE INFO.VIEW.RELATIONSHIPS()"),
             )
         else:
             queries = (
-                ("tables", "EVALUATE INFO.TABLES()"),
-                ("measures", "EVALUATE INFO.MEASURES()"),
+                ("tables", "EVALUATE INFO.VIEW.TABLES()"),
+                ("measures", "EVALUATE INFO.VIEW.MEASURES()"),
             )
         out: dict[str, Any] = {"scope": scope}
         for name, query in queries:
@@ -415,7 +484,7 @@ def _print_schema(schema: dict[str, Any]) -> None:
     measures = schema.get("measures") or []
     print(f"# measures: {len(measures)}")
     for row in measures:
-        table = _row_get(row, "TableName", "TABLE_NAME") or "?"
+        table = _row_get(row, "Table", "TableName", "TABLE_NAME") or "?"
         name = _row_get(row, "Name", "MEASURE_NAME", "MeasureName") or "?"
         print(f"{table}\t{name}")
     tables = schema.get("tables") or []

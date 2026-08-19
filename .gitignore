@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 config/pbi_config.json
 .DS_Store
+.env
+var/
