@@ -1,8 +1,11 @@
 ---
 name: pbi-marketing-qa
 description: >-
-  Метрики Power BI клиники (лиды, KPI, конверсия) через DAX. Триггер: дашборд,
-  leads_marketing, KPI marketing, «сколько лидов», визуал, график.
+  Метрики Power BI клиники (лиды, KPI, конверсия, fresh contact, воронка,
+  посетители) через DAX. Триггер: дашборд, leads_marketing, KPI, KPI Team,
+  «сколько лидов», конверсия, fresh contact, визуал, график. Это Power BI —
+  НЕ Bitrix24/CRM (conversion-analysis, lead-analysis): если в вопросе есть
+  Power BI/KPI Team/leads_marketing/дашборд — используй этот скилл.
 dependencies: python>=3.10, requests
 ---
 
@@ -11,6 +14,12 @@ dependencies: python>=3.10, requests
 Read-only. Цифры из Power BI через `{SKILL}/scripts/pbi_run.sh`. `{SKILL}` = `~/ask-pbi/`.
 
 **Cowork** + папка `~/ask-pbi` на компьютере. Не Chat, не cloud/`device_bash`. Ошибки → `references/TROUBLESHOOTING.md`.
+
+**Область (workspace `KPI Team`, `8f13bfda-3032-42d9-ab87-5410016e5047`):** в скоуп входят
+ТОЛЬКО `KPI team admin view`, `KPI medicine view`, `KPI marketing view`. Остальные
+датасеты этого workspace (`KPI team_embed`, `clinic_ops`, дубль `leads_marketing` —
+если видны в `list-datasets`) — вне скоупа этого скилла, не резолвить и не запрашивать
+по ним данные, даже если `resolve-dataset` их находит.
 
 ## Быстрый путь (минимум команд)
 
@@ -23,7 +32,7 @@ Read-only. Цифры из Power BI через `{SKILL}/scripts/pbi_run.sh`. `{S
 
 ```bash
 SKILL=~/ask-pbi
-"$SKILL/scripts/pbi_run.sh" resolve-dataset --dataset leads_marketing --workspace "Входящий трафик"
+"$SKILL/scripts/pbi_run.sh" resolve-dataset --dataset "KPI marketing view" --workspace "KPI Team"
 "$SKILL/scripts/pbi_run.sh" execute-dax --group <group_id> --dataset <dataset_id> --query '<DAX>'
 "$SKILL/scripts/pbi_run.sh" discover-schema --group <group_id> --dataset <dataset_id>
 ```
@@ -36,7 +45,7 @@ SKILL=~/ask-pbi
 2. `resolve-dataset` → `group_id`, `dataset_id`.
 3. DAX из `measures-cheatsheet.md` или `discover-schema` (таблицы+меры, локальный кэш `~/.pbi/schema-cache/`).
 4. Ответ простым языком: число + период. Без сырого JSON/DAX.
-5. **Гейт критика** (обязателен при сравнении периодов, %, тренде или причинно-следственной формулировке; необязателен для простого lookup одного числа): перед выдачей ответа вызови скилл `critic-gate` со сценарием `references/critic_gate_scenario.yaml` (скопируй, заполни `result_ref` черновиком ответа, добавь специфичные под этот вопрос критерии). `NEEDS-FIX` → исправь указанное, не показывай черновик до ACCEPT.
+5. **Гейт критика** (обязателен при сравнении периодов, %, тренде или причинно-следственной формулировке; необязателен для простого lookup одного числа): перед выдачей ответа вызови скилл `critic-gate` со сценарием `references/critic_gate_scenario.yaml` (скопируй, заполни `result_ref` черновиком ответа, добавь специфичные под этот вопрос критерии). **Обязательно добавь хотя бы один recall/позитивный-контроль критерий** (известное заранее число/факт, которое ответ ОБЯЗАН воспроизвести) — без него `critic-gate` по своим же правилам должен отказаться запускаться, а «пустой» или ошибочный ответ пройдёт AC1–AC5 вакуумно. `NEEDS-FIX` → исправь указанное, не показывай черновик до ACCEPT.
 
 ## Запрещено
 

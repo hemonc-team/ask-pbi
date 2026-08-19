@@ -36,7 +36,17 @@ SCHEMA_CACHE_TTL_S = 7 * 86400
 
 # Датасеты вне периметра этого skill независимо от workspace/dataset_id
 # (id меняется при publish, имя — нет). Сверяется по нормализованному имени.
-RESTRICTED_DATASET_NAMES = {"leadsmarketing", "clinicops"}
+RESTRICTED_DATASET_NAMES = {
+    "leadsmarketing",
+    "clinicops",
+    # "leads and bookings managers view no cash clean online (1)" — исключён
+    # 2026-08-18: модель гендиректора, маркетологам видеть не должна.
+    "leadsandbookingsmanagersviewnocashcleanonline1",
+    # "KPI team_embed" — исключён 2026-08-19: служебная модель для встраиваемых
+    # отчётов, не входит в разрешённый периметр (только marketing/admin/medicine
+    # view из workspace KPI Team).
+    "kpiteamembed",
+}
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:

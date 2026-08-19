@@ -44,7 +44,7 @@ Upload `dist/pbi-marketing-qa-bootstrap.zip` (собирает разработ�
 
 ## 6. Smoke
 
-«Сколько свежих контактов за последний месяц в leads_marketing?»
+«Сколько всего свежих контактов сейчас в KPI marketing view?»
 
 ## Ошибки
 
@@ -53,3 +53,4 @@ Upload `dist/pbi-marketing-qa-bootstrap.zip` (собирает разработ�
 | `invalid_grant` | Повтор §4 |
 | Нет workspace | Доступ в app.powerbi.com |
 | `executeQueries` 403 | Tenant setting — dev (см. PBI_ADMIN_CHECKLIST в pbi-patch-factory) |
+| `executeQueries` 400 + `AnalysisServicesErrorCode 3239575574` только на `discover-schema` (INFO.TABLES/INFO.MEASURES), обычный `execute-dax` при этом работает | Нужен Build permission на датасете для аккаунта маркетолога — см. `FOR_DEVELOPERS.md` |
