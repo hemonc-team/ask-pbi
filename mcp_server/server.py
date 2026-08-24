@@ -37,6 +37,7 @@ from mcp_server.dax_templates import (  # noqa: E402
     build_month_range_query,
     build_period_query,
     build_snapshot_query,
+    build_topn_query,
 )
 from mcp_server.registry import find_metric, get_registry  # noqa: E402
 
@@ -66,11 +67,11 @@ _load_env_from_json_config()
 _cfg = Config.load()
 _client = PBIClient(_cfg)
 
-_http_auth, _http_verifier = build_http_auth()
+_http_auth, _oauth_provider = build_http_auth()
 _mcp_kwargs: dict = {}
-if _http_auth is not None and _http_verifier is not None:
+if _http_auth is not None and _oauth_provider is not None:
     _mcp_kwargs["auth"] = _http_auth
-    _mcp_kwargs["token_verifier"] = _http_verifier
+    _mcp_kwargs["auth_server_provider"] = _oauth_provider
 mcp = MCPServer("ask-pbi", **_mcp_kwargs)
 
 
@@ -89,6 +90,10 @@ def _public_metric(m) -> dict:
         "supported_filters": list(m.supported_filters),
         "notes": m.notes,
         "confirmed_on": m.confirmed_on,
+        "kind": m.kind,
+        "category_column": m.category_column,
+        "value_alias": m.value_alias,
+        "extra_value_aliases": [a for a, _ in m.extra_values],
     }
 
 
@@ -105,12 +110,11 @@ def get_available_metrics() -> dict:
     """Вернуть список подтверждённых бизнес-метрик Power BI (workspace KPI Team).
 
     Это ЕДИНСТВЕННЫЙ способ узнать, какие метрики существуют — не пытайся
-    писать сырой DAX или изобретать metric_id. Метрики со status="broken"
-    намеренно оставлены в списке (не скрыты) — get_metric_value на них честно
-    откажет. Поле date_granularity ("month"/"day") — минимальный шаг периода,
-    который метрика реально поддерживает; multi_period_aggregatable=false
-    значит, что период обязан укладываться ровно в один такой шаг (см.
-    get_metric_value/analyze_trend).
+    писать сырой DAX или изобретать metric_id. kind="scalar" — одно число
+    (get_metric_value / analyze_trend). kind="ranking" — топ строк по категории
+    (только get_breakdown: страницы, источники, регионы). Метрики со
+    status="broken" намеренно оставлены в списке — get_metric_value на них
+    честно откажет.
     """
     return {"ok": True, "metrics": [_public_metric(m) for m in get_registry()]}
 
@@ -153,6 +157,15 @@ def get_metric_value(
             "ok": False,
             "reason": "metric_unverified",
             "detail": "Эта метрика ни разу не проверена живым запросом — использовать нельзя.",
+        }
+    if metric.kind == "ranking":
+        return {
+            "ok": False,
+            "reason": "use_get_breakdown",
+            "detail": (
+                f"Метрика '{metric_id}' — топ по категории, не одно число. "
+                "Вызови get_breakdown с этим metric_id и top_n."
+            ),
         }
     if not metric.date_aware and (start_date or end_date):
         return {
@@ -236,6 +249,116 @@ def _is_month_end(iso_date: str) -> bool:
     return d == last_day
 
 
+def _extract_breakdown_rows(result: dict, metric) -> list[dict]:
+    raw = result.get("results", [{}])[0].get("tables", [{}])[0].get("rows", [])
+    short = (metric.category_column or "").split("[")[-1].rstrip("]")
+    aliases = [metric.value_alias, *[a for a, _ in metric.extra_values]]
+    out: list[dict] = []
+    for row in raw:
+        category = None
+        values: dict = {}
+        for k, v in row.items():
+            k_stripped = k.strip("[]")
+            if k.endswith(f"[{short}]") or k_stripped == short:
+                category = v
+                continue
+            alias = k_stripped
+            if alias in aliases:
+                values[alias] = v
+        item = {"category": category, metric.value_alias: values.get(metric.value_alias)}
+        for a, _ in metric.extra_values:
+            item[a] = values.get(a)
+        out.append(item)
+    return out
+
+
+@mcp.tool()
+def get_breakdown(
+    metric_id: str,
+    top_n: int = 10,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Топ строк по категории (страницы, источники, регионы, кампании).
+
+    Только для метрик с kind="ranking" из get_available_metrics.
+    top_n — от 1 до 20 (больше обрежется). start_date/end_date вместе или никакие.
+    Не пиши DAX и не подставляй имена колонок сам — только metric_id.
+    Для вопросов вроде «топ-3 страниц входа» / «какие лендинги принесли больше
+    всего лидов» — этот инструмент, не get_metric_value.
+    """
+    metric = find_metric(metric_id)
+    if metric is None:
+        return {
+            "ok": False,
+            "reason": "metric_not_found",
+            "detail": f"metric_id '{metric_id}' не найден — сначала get_available_metrics.",
+        }
+    if metric.kind != "ranking":
+        return {
+            "ok": False,
+            "reason": "not_a_ranking",
+            "detail": (
+                f"'{metric_id}' — одно число (kind=scalar). Для топа возьми "
+                "метрику с kind=ranking (top_entry_pages, top_content_landings_by_leads, …)."
+            ),
+        }
+    if metric.status != "confirmed":
+        return {"ok": False, "reason": "metric_not_confirmed", "detail": metric.notes}
+    if not metric.date_aware and (start_date or end_date):
+        return {
+            "ok": False,
+            "reason": "not_date_filterable",
+            "detail": "У этого топа нет рабочей даты — вызови без start_date/end_date.",
+        }
+    if (start_date is None) != (end_date is None):
+        return {
+            "ok": False,
+            "reason": "invalid_period",
+            "detail": "start_date и end_date нужны вместе, либо ни одного.",
+        }
+
+    dataset_name = metric.datasets[0]
+    try:
+        resolved = _client.resolve_dataset(dataset_name, WORKSPACE_HINT)
+    except RuntimeError as e:
+        return {"ok": False, "reason": "dataset_resolve_failed", "detail": str(e)}
+
+    start_d = date_cls.fromisoformat(start_date) if start_date else None
+    end_d = date_cls.fromisoformat(end_date) if end_date else None
+    query = build_topn_query(
+        category_column=metric.category_column or "",
+        value_alias=metric.value_alias,
+        value_expr=metric.measure_dax_name,
+        extra_values=metric.extra_values,
+        top_n=top_n,
+        date_column=metric.date_table,
+        start_date=start_d,
+        end_date=end_d,
+    )
+    try:
+        result = _client.execute_dax(resolved["group_id"], resolved["dataset_id"], query)
+    except RuntimeError as e:
+        return {"ok": False, "reason": "pbi_query_failed", "detail": str(e)}
+
+    rows = _extract_breakdown_rows(result, metric)
+    period = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "label": "all_time_snapshot" if start_date is None else f"{start_date}..{end_date}",
+    }
+    return {
+        "ok": True,
+        "metric_id": metric.metric_id,
+        "category": metric.category_column,
+        "rows": rows,
+        "top_n": min(max(int(top_n), 1), 20),
+        "period": period,
+        "dataset": resolved["dataset"],
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @mcp.tool()
 def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -> dict:
     """ОБЯЗАТЕЛЬНАЯ точка входа для ЛЮБОГО вопроса про динамику/тренд/сравнение
@@ -261,6 +384,12 @@ def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -
             "ok": False,
             "reason": "metric_not_found",
             "detail": f"metric_id '{metric_id}' не найден в реестре.",
+        }
+    if metric.kind == "ranking":
+        return {
+            "ok": False,
+            "reason": "use_get_breakdown",
+            "detail": "Для топа по страницам/источникам используй get_breakdown, не analyze_trend.",
         }
     if not metric.date_aware:
         return {
@@ -339,11 +468,76 @@ async def health(_request: Request) -> Response:
     return JSONResponse({"ok": True, "server": "ask-pbi"})
 
 
+@mcp.custom_route("/login", methods=["GET"])
+async def oauth_login(request: Request) -> Response:
+    if _oauth_provider is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    state = request.query_params.get("state") or ""
+    return _oauth_provider.login_page(state)
+
+
+@mcp.custom_route("/login/callback", methods=["POST"])
+async def oauth_login_callback(request: Request) -> Response:
+    if _oauth_provider is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    return await _oauth_provider.handle_login_callback(request)
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
+async def oauth_prm_alias(_request: Request) -> Response:
+    """Совместимость: некоторые клиенты ищут PRM без суффикса /mcp."""
+    if _http_auth is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    return JSONResponse(
+        {
+            "resource": str(_http_auth.resource_server_url),
+            "authorization_servers": [str(_http_auth.issuer_url)],
+            "scopes_supported": _http_auth.required_scopes,
+            "bearer_methods_supported": ["header"],
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@mcp.custom_route(
+    "/.well-known/oauth-authorization-server/mcp", methods=["GET", "OPTIONS"]
+)
+async def oauth_as_alias(_request: Request) -> Response:
+    """RFC 8414 path-aware discovery, если клиент ищет metadata от /mcp."""
+    if _http_auth is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    issuer = str(_http_auth.issuer_url).rstrip("/")
+    return JSONResponse(
+        {
+            "issuer": issuer,
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "registration_endpoint": f"{issuer}/register",
+            "revocation_endpoint": f"{issuer}/revoke",
+            "scopes_supported": _http_auth.required_scopes,
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [
+                "client_secret_post",
+                "client_secret_basic",
+                "none",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
 def main() -> None:
     transport = os.environ.get("ASKPBI_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http"):
         if not os.environ.get("ASKPBI_MCP_TOKEN", "").strip():
             sys.stderr.write("ERROR: ASKPBI_TRANSPORT=http требует ASKPBI_MCP_TOKEN\n")
+            sys.exit(2)
+        if not os.environ.get("ASKPBI_OAUTH_PASSWORD", "").strip():
+            sys.stderr.write(
+                "ERROR: ASKPBI_TRANSPORT=http требует ASKPBI_OAUTH_PASSWORD\n"
+            )
             sys.exit(2)
         mcp.run(
             transport="streamable-http",

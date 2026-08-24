@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import json
 
-from mcp_server.server import analyze_trend, get_available_metrics, get_metric_value
+from mcp_server.server import (  # noqa: E402
+    analyze_trend,
+    get_available_metrics,
+    get_breakdown,
+    get_metric_value,
+)
 
 
 def _p(label: str, obj) -> None:
@@ -93,6 +98,21 @@ def main() -> None:
             {"start_date": "2026-01-01", "end_date": "2026-08-31"},
             {"start_date": "2025-01-01", "end_date": "2025-08-31"},
         ),
+    )
+
+    _p(
+        "get_breakdown('top_content_landings_by_leads', 3)  — ожидаем дексаметазон ~272",
+        get_breakdown("top_content_landings_by_leads", 3),
+    )
+
+    _p(
+        "get_breakdown('top_entry_pages', 3)  — ожидаем URL hemonc.ru/poleznoe/…",
+        get_breakdown("top_entry_pages", 3),
+    )
+
+    _p(
+        "get_metric_value('top_entry_pages')  — ожидаем ok:false, use_get_breakdown",
+        get_metric_value("top_entry_pages"),
     )
 
 

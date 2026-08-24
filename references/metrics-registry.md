@@ -17,9 +17,28 @@
 | `fresh_contact_conversion_rate_pct` | marketing / admin / medicine view | `[Fresh_Contact_Conversion_Rate_%]` | `date_dim_month[YearMonth]` | месяц | ❌ нет — возвращает пусто, спрашивать месяц за месяцем |
 | `contact_to_visit_conversion_pct` | marketing / admin / medicine view | `[Conversion_Primary_Booking_to_Visit_% 1c]` | `date_dim_daily[Date]` | день | предварительно да (не так тщательно перепроверено, как выше) |
 
-Все три — `status: confirmed`. Ни одна метрика со `status: broken` сейчас в
-реестре нет (прежняя запись про `Fresh_Contact_Conversion_Rate_%` = broken была
-неверной — см. выше).
+| `site_visitors_count` | marketing view | `SUM(…[Посетители])` | `'Посетители сайта во времени✅📅'[Месяц визита]` | день | ✅ |
+| `site_pageviews_count` | marketing view | `SUM(…[Просмотры])` | та же | день | ✅ |
+| `content_leads_count` | marketing view | `SUM('Контент landing✅'[Лиды])` | `'Контент landing✅'[Месяц]` | день | ✅ |
+| `content_bookings_count` | marketing view | `[Записи]` | та же | день | ✅ |
+| `total_leads_count` | marketing view | `[Лиды, шт.]` | `date_dim_month[YearMonth]` | месяц | предварительно |
+
+**Ranking** (`kind=ranking`, инструмент `get_breakdown`):
+
+| metric_id | Категория | Значение | Дата |
+|---|---|---|---|
+| `top_content_landings_by_leads` | Landing URL | лиды + посетители + записи | Месяц |
+| `top_content_landings_by_visitors` | Landing URL | посетители + лиды | Месяц |
+| `top_entry_pages` | Страница входа | посетители | Месяц визита |
+| `top_popular_pages` | Адрес, ур. 3 | посетители | нет |
+| `top_traffic_sources` | Источник трафика | посетители | нет (месяц текстовый) |
+| `top_regions` / `top_cities` | Область / Город | посетители | Месяц визита |
+| `top_search_engines` | Поисковая система | посетители | Месяц визита |
+| `top_social_networks` | Cоциальная сеть | посетители | Месяц визита |
+| `top_direct_campaigns` | Кампания Директа | посетители | Месяц визита |
+| `top_lead_sources` | Лиды✅[Источник] | [Лиды, шт.] | нет |
+
+Не в реестре намеренно: Пациенты, ФИО, телефоны, таблицы 1С на уровне человека.
 
 ## Как добавить метрику — теперь через discover-schema
 

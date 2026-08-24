@@ -59,3 +59,41 @@ def build_month_range_query(
         f'{year_month_column} >= "{start_year_month}" && {year_month_column} <= "{end_year_month}"'
         "))"
     )
+
+
+def build_topn_query(
+    category_column: str,
+    value_alias: str,
+    value_expr: str,
+    extra_values: tuple[tuple[str, str], ...] = (),
+    top_n: int = 10,
+    date_column: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> str:
+    """TOPN по категории. LLM не передаёт DAX — только id метрики, даты и top_n."""
+    n = max(1, min(int(top_n), 20))
+    parts = [f"  {category_column},"]
+    if date_column and start_date and end_date:
+        parts.append(
+            "  FILTER(ALL("
+            f"{date_column}), {date_column} >= DATE({start_date.year},{start_date.month},{start_date.day})"
+            f" && {date_column} <= DATE({end_date.year},{end_date.month},{end_date.day})"
+            "),"
+        )
+    parts.append(f'  "{value_alias}", {value_expr}')
+    for alias, expr in extra_values:
+        parts.append(f'  "{alias}", {expr}')
+    summarize = "SUMMARIZECOLUMNS(\n" + ",\n".join(p.rstrip(",") for p in parts) + "\n)"
+    blank = (
+        f"NOT ISBLANK({category_column}) && {category_column} <> \"\" "
+        f'&& {category_column} <> "Not specified"'
+    )
+    return (
+        "EVALUATE\n"
+        f"TOPN({n},\n"
+        f"  FILTER(\n    {summarize},\n    {blank}\n  ),\n"
+        f"  [{value_alias}], DESC\n"
+        ")\n"
+        f"ORDER BY [{value_alias}] DESC"
+    )

@@ -6,11 +6,16 @@ Dev (патч `.pbix`, publish) — [`pbi-patch-factory`](https://github.com/hem
 
 ## Архитектура
 
-HTTP MCP на DWH (`https://pbi.hemonc.ru/mcp`). Claude ходит туда с ключом
-(Bearer). На DWH — Service Principal в Power BI.
+HTTP MCP на DWH (`https://pbi.hemonc.ru/mcp`). Claude Desktop ходит туда по
+OAuth (custom connector): discovery → DCR → `/authorize` → страница логина
+с общим паролем → `/token`. На DWH — Service Principal в Power BI.
+
+Статический Bearer (`ASKPBI_MCP_TOKEN`) оставлен для Claude Code.
 
 LLM никогда не пишет DAX: только `get_available_metrics` / `get_metric_value` /
-`analyze_trend`. Python сам собирает запрос по шаблону.
+`get_breakdown` / `analyze_trend`. Python сам собирает запрос по шаблону.
+`get_breakdown` — топ по категории (страницы, источники); scalar-метрики
+через `get_metric_value`.
 
 Локальный stdio (`python3 -m mcp_server.server`) — только для разработки,
 с delegated Device Code. Маркетологам его не раздавать.
@@ -23,7 +28,9 @@ LLM никогда не пишет DAX: только `get_available_metrics` / `
 | `mcp_server/registry.py` | Реестр подтверждённых метрик — источник правды на рантайме |
 | `mcp_server/dax_templates.py` | Сборка DAX (снепшот / период) |
 | `mcp_server/critic.py` | Гейт критика для `analyze_trend` |
-| `mcp_server/http_auth.py` | Статический Bearer для HTTP |
+| `mcp_server/http_auth.py` | AuthSettings + OAuth для HTTP |
+| `mcp_server/oauth_provider.py` | DCR, login, PKCE, refresh, persist |
+| `mcp_server/oauth_selftest.py` | Проверка OAuth без PBI |
 | `mcp_server/smoke_test.py` | Живая проверка без MCP-транспорта |
 | `deploy/` | systemd + nginx на DWH (`/opt/ask-pbi`) |
 | `scripts/pbi_service_client.py` | Read-only REST (delegated или SP) |
@@ -46,11 +53,19 @@ LLM никогда не пишет DAX: только `get_available_metrics` / `
 
 ## Auth
 
-- **Прод:** `PBI_AUTH_MODE=service_principal`, секрет и `ASKPBI_MCP_TOKEN` только
-  в `/opt/ask-pbi/.env`.
+- **Прод, Claude Desktop:** MCP сам выступает OAuth AS. Owner добавляет
+  custom connector `https://pbi.hemonc.ru/mcp` (без Client ID/Secret).
+  Маркетолог жмёт Connect и вводит `ASKPBI_OAUTH_PASSWORD`. Redirect URI
+  только Claude (`claude.ai` / `claude.com`) и localhost.
+- **Прод, Claude Code:** тот же HTTP, заголовок `Authorization: Bearer`
+  из `ASKPBI_MCP_TOKEN`.
+- **Секреты** (`PBI_CLIENT_SECRET`, оба ключа MCP) только в `/opt/ask-pbi/.env`.
+- Клиенты и выданные токены — `/opt/ask-pbi/var/oauth-store.json` (`chmod 600`).
 - **Локально:** Device Code → `~/.pbi/tokens.json`, tenant/client из
   `config/pbi_config.example.json`.
 - Не ставить `mcp` в `/opt/clinic-dwh/venv`.
+
+Проверка OAuth без PBI: `python3 -m mcp_server.oauth_selftest`.
 
 ## Известные ограничения модели
 
@@ -64,7 +79,8 @@ LLM никогда не пишет DAX: только `get_available_metrics` / `
 
 Каталог `/opt/ask-pbi`, отдельно от `/opt/clinic-dwh`. Секреты только в
 `.env` (`chmod 600`), шаблон — `.env.example`. Ключ для маркетологов —
-`ASKPBI_MCP_TOKEN` (раздаётся вручную, не в git).
+`ASKPBI_MCP_TOKEN` (Claude Code) и `ASKPBI_OAUTH_PASSWORD` (страница Connect)
+раздаются вручную, не в git.
 
 Первый раз:
 
@@ -85,12 +101,17 @@ certbot certonly --nginx -d pbi.hemonc.ru
 ```bash
 rsync -az --exclude '.git/' --exclude 'venv/' --exclude '.env' --exclude 'var/' \
   ./ root@62.113.60.133:/opt/ask-pbi/
-ssh root@62.113.60.133 'cd /opt/ask-pbi && ./venv/bin/pip install -q -r requirements.txt && systemctl restart ask-pbi'
+ssh root@62.113.60.133 'cd /opt/ask-pbi && ./venv/bin/pip install -q -r requirements.txt && cp deploy/nginx-pbi.hemonc.ru.conf /etc/nginx/sites-available/pbi.hemonc.ru && nginx -t && systemctl reload nginx && systemctl restart ask-pbi'
 ```
 
-Проверка: `curl http://127.0.0.1:8100/health`, `python3 -m mcp_server.smoke_test`.
-Снаружи `/mcp` без ключа → 401.
+Проверка: `curl http://127.0.0.1:8100/health`, `python3 -m mcp_server.oauth_selftest`,
+`python3 -m mcp_server.smoke_test`.
+Снаружи `/mcp` без ключа → 401, затем OAuth discovery.
+
+```bash
+curl -sS https://pbi.hemonc.ru/.well-known/oauth-authorization-server
+curl -sS https://pbi.hemonc.ru/.well-known/oauth-protected-resource/mcp
+```
 
 После смены домена на проде обновить в `.env`: `ASKPBI_PUBLIC_URL=https://pbi.hemonc.ru/mcp`
-и перезапустить `ask-pbi`. Маркетологам — новая команда `claude mcp add` с новым URL
-(ключ тот же, если не меняли).
+и перезапустить `ask-pbi`. Маркетологам Desktop — заново Connect, если сменился URL.
