@@ -13,9 +13,11 @@ OAuth (custom connector): discovery → DCR → `/authorize` → страниц�
 Статический Bearer (`ASKPBI_MCP_TOKEN`) оставлен для Claude Code.
 
 LLM никогда не пишет DAX: только `get_available_metrics` / `get_metric_value` /
-`get_breakdown` / `analyze_trend`. Python сам собирает запрос по шаблону.
-`get_breakdown` — топ по категории (страницы, источники); scalar-метрики
-через `get_metric_value`.
+`get_breakdown` / `analyze_trend` / `list_model_measures`. Python сам собирает
+запрос по шаблону. `get_breakdown` — топ по категории (страницы, источники);
+scalar-метрики через `get_metric_value`. `list_model_measures` — справочник
+имён мер модели (без формул и без цифр): чтобы честно сказать «мера есть,
+но не в каталоге», а не подставить соседнюю или сочинить DAX.
 
 Локальный stdio (`python3 -m mcp_server.server`) — только для разработки,
 с delegated Device Code. Маркетологам его не раздавать.
@@ -24,8 +26,9 @@ LLM никогда не пишет DAX: только `get_available_metrics` / `
 
 | Путь | Назначение |
 |---|---|
-| `mcp_server/server.py` | Точка входа, три `@mcp.tool()` |
+| `mcp_server/server.py` | Точка входа, `@mcp.tool()` |
 | `mcp_server/registry.py` | Реестр подтверждённых метрик — источник правды на рантайме |
+| `mcp_server/model_catalog.py` | Справочник имён мер (`list_model_measures`), без Expression |
 | `mcp_server/dax_templates.py` | Сборка DAX (снепшот / период) |
 | `mcp_server/critic.py` | Гейт критика для `analyze_trend` |
 | `mcp_server/http_auth.py` | AuthSettings + OAuth для HTTP |

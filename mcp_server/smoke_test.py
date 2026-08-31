@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 
+from mcp_server.model_catalog import (  # noqa: E402
+    named_measure_from_dax,
+    resolve_allowed_dataset,
+)
 from mcp_server.server import (  # noqa: E402
     analyze_trend,
     get_available_metrics,
     get_breakdown,
     get_metric_value,
+    list_model_measures,
 )
 
 
@@ -21,7 +26,46 @@ def _p(label: str, obj) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
 
 
+def _check_catalog_helpers() -> None:
+    assert named_measure_from_dax("[Количество свежих контактов]") == (
+        "Количество свежих контактов"
+    )
+    assert named_measure_from_dax("SUM('Посетители сайта во времени✅📅'[Посетители])") is None
+    assert resolve_allowed_dataset(None) == "KPI marketing view"
+    assert resolve_allowed_dataset("leads_marketing") is None
+    from mcp_server.model_catalog import measures_from_schema
+
+    leaked = measures_from_schema(
+        {
+            "measures": [
+                {
+                    "[Name]": "X",
+                    "[Table]": "T",
+                    "[Expression]": "CALCULATE(1)",
+                    "[IsHidden]": False,
+                }
+            ]
+        }
+    )
+    assert leaked == [
+        {
+            "name": "X",
+            "table": "T",
+            "description": "",
+            "display_folder": "",
+            "hidden": False,
+            "in_registry": False,
+            "registry_ids": [],
+        }
+    ]
+    assert measures_from_schema(
+        {"measures": [{"[Name]": "ФИО", "[Table]": "Пациенты", "[IsHidden]": False}]}
+    ) == []
+    print("ok catalog helpers")
+
+
 def main() -> None:
+    _check_catalog_helpers()
     _p("get_available_metrics()", get_available_metrics())
 
     _p(
@@ -113,6 +157,19 @@ def main() -> None:
     _p(
         "get_metric_value('top_entry_pages')  — ожидаем ok:false, use_get_breakdown",
         get_metric_value("top_entry_pages"),
+    )
+
+    _p(
+        "list_model_measures(search='свежих')  — ожидаем in_registry true, Количество свежих контактов",
+        list_model_measures(search="свежих"),
+    )
+    _p(
+        "list_model_measures(search='Chemo')  — ожидаем меры, in_registry false",
+        list_model_measures(search="Chemo"),
+    )
+    _p(
+        "list_model_measures(dataset='leads_marketing')  — ожидаем ok:false, dataset_not_allowed",
+        list_model_measures(dataset="leads_marketing"),
     )
 
 

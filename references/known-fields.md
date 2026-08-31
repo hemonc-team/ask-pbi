@@ -202,3 +202,18 @@ LLM — это теперь `mcp_server/registry.py` (+ человекочита
 - **Как использовать:** `get_breakdown(top_content_landings_by_leads)` и
   `get_breakdown(top_entry_pages)`. Не писать DAX по визуалу.
 - **Найдено:** 2026-08-19, вопрос «топ-3 страниц входа и топ-3 по лидам».
+
+### list_model_measures — имена мер без формул; визуалы REST не отдаёт
+- **Датасет:** `KPI marketing view` / `medicine` / `admin view` (workspace KPI Team).
+- **Оказалось:** `INFO.VIEW.MEASURES()` даёт полный список имён (66 / 67 / 163).
+  Поле `[Expression]` в кэше схемы есть — отдавать его LLM нельзя, провоцирует
+  писать DAX. Часть каталога ask-pbi (посетители сайта, топы страниц) — это
+  `SUM` колонки island-таблиц, не именованные меры: в `list_model_measures` их
+  не будет. REST `GET .../reports/{id}/pages/{page}/visuals` отвечает 404;
+  страницы отчёта (`GET .../pages`) читаются: marketing 4, medicine 2, admin
+  pages API 500. Визуалы ≠ меры, считать визуалы через этот skill нельзя.
+- **Как использовать:** `list_model_measures(search=...)` только как справочник
+  «есть ли такая мера». Цифры — исключительно `get_available_metrics` →
+  `get_metric_value` / `get_breakdown`. Датасеты вне allowlist (в т.ч.
+  `leads_marketing`, `KPI team_embed`) отклонять до `discover-schema`.
+- **Найдено:** 2026-08-31, вопрос «обучить Claude всему Power BI / сколько визуалов».

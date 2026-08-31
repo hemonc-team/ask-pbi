@@ -5,7 +5,7 @@
 - stdio локально для разработки — `python3 -m mcp_server.server`
 
 LLM никогда не пишет DAX — только `get_available_metrics` /
-`get_metric_value` / `analyze_trend`.
+`get_metric_value` / `get_breakdown` / `analyze_trend` / `list_model_measures`.
 """
 
 from __future__ import annotations
@@ -38,6 +38,11 @@ from mcp_server.dax_templates import (  # noqa: E402
     build_period_query,
     build_snapshot_query,
     build_topn_query,
+)
+from mcp_server.model_catalog import (  # noqa: E402
+    ALLOWED_DATASETS,
+    measures_from_schema,
+    resolve_allowed_dataset,
 )
 from mcp_server.registry import find_metric, get_registry  # noqa: E402
 
@@ -109,14 +114,90 @@ def _extract_value(result: dict) -> float | int | None:
 def get_available_metrics() -> dict:
     """Вернуть список подтверждённых бизнес-метрик Power BI (workspace KPI Team).
 
-    Это ЕДИНСТВЕННЫЙ способ узнать, какие метрики существуют — не пытайся
+    Это ЕДИНСТВЕННЫЙ способ узнать, какие метрики можно ПОСЧИТАТЬ — не пытайся
     писать сырой DAX или изобретать metric_id. kind="scalar" — одно число
     (get_metric_value / analyze_trend). kind="ranking" — топ строк по категории
     (только get_breakdown: страницы, источники, регионы). Метрики со
     status="broken" намеренно оставлены в списке — get_metric_value на них
     честно откажет.
+
+    Вопрос не из этого списка — вызови list_model_measures (справочник имён,
+    цифр не даёт). Не подставляй имя меры как metric_id и не пиши DAX.
     """
-    return {"ok": True, "metrics": [_public_metric(m) for m in get_registry()]}
+    return {
+        "ok": True,
+        "metrics": [_public_metric(m) for m in get_registry()],
+        "hint": (
+            "Считать можно только metric_id из этого списка. Если вопроса нет — "
+            "list_model_measures: скажи, есть ли такая мера в модели, и что "
+            "посчитать её пока нельзя (написать Михаилу). Не выдумывай DAX."
+        ),
+    }
+
+
+@mcp.tool()
+def list_model_measures(
+    dataset: str | None = None,
+    search: str | None = None,
+    include_hidden: bool = False,
+) -> dict:
+    """Справочник именованных мер семантической модели (только имена).
+
+    НЕ считает цифры и НЕ заменяет get_available_metrics. Вызывай, если вопроса
+    нет в каталоге подтверждённых метрик: есть ли такая мера в Power BI.
+
+    Правила:
+    - Имена отсюда НЕЛЬЗЯ передавать в get_metric_value как metric_id.
+    - НЕ пиши DAX по этим именам — даже если мера выглядит подходящей.
+    - in_registry=true → считай через get_available_metrics / get_metric_value.
+    - in_registry=false → честно скажи: мера в модели есть, но ещё не подключена;
+      посчитать нельзя; пусть напишут Михаилу.
+    - Пустой список по search → такой именованной меры нет (визуал мог быть
+      SUM колонки без меры — это тоже «пока не считаем»).
+    dataset — одно из: KPI marketing view (по умолчанию), KPI medicine view,
+    KPI team admin view. search — подстрока в имени/таблице (например «химио»,
+    «сарафан», «CR»).
+    """
+    allowed = resolve_allowed_dataset(dataset)
+    if allowed is None:
+        return {
+            "ok": False,
+            "reason": "dataset_not_allowed",
+            "detail": (
+                f"Датасет «{dataset}» вне периметра. Разрешены только: "
+                + ", ".join(ALLOWED_DATASETS)
+            ),
+            "allowed_datasets": list(ALLOWED_DATASETS),
+        }
+    try:
+        resolved = _client.resolve_dataset(allowed, WORKSPACE_HINT)
+        schema = _client.discover_schema(
+            resolved["group_id"], resolved["dataset_id"], scope="measures"
+        )
+    except RuntimeError as e:
+        return {"ok": False, "reason": "schema_discover_failed", "detail": str(e)}
+
+    measures = measures_from_schema(
+        schema, include_hidden=include_hidden, search=search
+    )
+    in_reg = sum(1 for m in measures if m["in_registry"])
+    return {
+        "ok": True,
+        "dataset": resolved["dataset"],
+        "search": search,
+        "measures": measures,
+        "counts": {
+            "returned": len(measures),
+            "in_registry": in_reg,
+            "not_in_registry": len(measures) - in_reg,
+        },
+        "note": (
+            "Только имена мер, без формул и без цифр. Считать можно лишь "
+            "metric_id из get_available_metrics. Часть каталога (посетители/"
+            "просмотры сайта, топы страниц) — SUM колонок, их здесь не будет. "
+            "Меру не из реестра не считай и не подставляй в другие инструменты."
+        ),
+    }
 
 
 @mcp.tool()
