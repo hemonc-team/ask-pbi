@@ -18,6 +18,10 @@ if ! grep -q '^ASKPBI_MCP_TOKEN=.\+' "$ENV_FILE"; then
   echo "В $ENV_FILE пустой ASKPBI_MCP_TOKEN"
   exit 1
 fi
+if ! grep -q '^ASKPBI_OAUTH_PASSWORD=.\+' "$ENV_FILE"; then
+  echo "В $ENV_FILE пустой ASKPBI_OAUTH_PASSWORD (нужен для Claude Desktop connector)"
+  exit 1
+fi
 
 mkdir -p "$PROJECT_DIR/var"
 chmod 700 "$PROJECT_DIR/var"
@@ -50,3 +54,4 @@ systemctl reload nginx
 echo "ask-pbi: $(systemctl is-active ask-pbi)"
 echo "health:  curl -sS http://127.0.0.1:8100/health"
 echo "mcp:     https://pbi.hemonc.ru/mcp"
+echo "oauth:   https://pbi.hemonc.ru/.well-known/oauth-authorization-server"

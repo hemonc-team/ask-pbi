@@ -21,18 +21,21 @@ def build_period_query(
     start_date: date,
     end_date: date,
 ) -> str:
-    """Запрос значения меры за период по дневной таблице дат (`<table>[Date]`).
+    """Запрос значения меры за период по Date/DateTime-колонке.
 
-    Задел на будущее: сегодня ни одна метрика в реестре не привязана к дневной
-    таблице дат с активной связью до нужной таблицы фактов (`Лиды✅` связана с
-    `date_dim_month` только помесячно — см. build_month_range_query). Годится,
-    как только появится метрика с реальной дневной гранулярностью.
+    Нижняя граница включительно (`>= DATE(start)`), верхняя — начало следующего
+    дня после end (`< DATE(end)+1`). Так корректно и для Date (`date_dim_daily`),
+    и для DateTime (`CALL_START_TIME`): иначе `<= DATE(end)` отсекает почти весь
+    последний день у datetime.
     """
+    from datetime import timedelta
+
+    end_exclusive = end_date + timedelta(days=1)
     return (
         'EVALUATE ROW("value", CALCULATE('
         f"{measure_dax_name}, "
         f"{date_table} >= DATE({start_date.year},{start_date.month},{start_date.day}) "
-        f"&& {date_table} <= DATE({end_date.year},{end_date.month},{end_date.day})"
+        f"&& {date_table} < DATE({end_exclusive.year},{end_exclusive.month},{end_exclusive.day})"
         "))"
     )
 
@@ -58,4 +61,52 @@ def build_month_range_query(
         f"{measure_dax_name}, "
         f'{year_month_column} >= "{start_year_month}" && {year_month_column} <= "{end_year_month}"'
         "))"
+    )
+
+
+def build_topn_query(
+    category_column: str,
+    value_alias: str,
+    value_expr: str,
+    extra_values: tuple[tuple[str, str], ...] = (),
+    top_n: int = 10,
+    date_column: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    row_filter: str | None = None,
+) -> str:
+    """TOPN по категории. LLM не передаёт DAX — только id метрики, даты и top_n.
+
+    row_filter — опциональное DAX-условие в FILTER (напр. "[П_Записи] >= 50").
+    """
+    n = max(1, min(int(top_n), 20))
+    parts = [f"  {category_column},"]
+    if date_column and start_date and end_date:
+        from datetime import timedelta
+
+        end_exclusive = end_date + timedelta(days=1)
+        parts.append(
+            "  FILTER(ALL("
+            f"{date_column}), {date_column} >= DATE({start_date.year},{start_date.month},{start_date.day})"
+            f" && {date_column} < DATE({end_exclusive.year},{end_exclusive.month},{end_exclusive.day})"
+            "),"
+        )
+    parts.append(f'  "{value_alias}", {value_expr}')
+    for alias, expr in extra_values:
+        parts.append(f'  "{alias}", {expr}')
+    summarize = "SUMMARIZECOLUMNS(\n" + ",\n".join(p.rstrip(",") for p in parts) + "\n)"
+    blank = (
+        f"NOT ISBLANK({category_column}) && {category_column} <> \"\" "
+        f'&& {category_column} <> "Not specified" '
+        f'&& {category_column} <> "Не определено"'
+    )
+    if row_filter:
+        blank = f"({blank}) && ({row_filter})"
+    return (
+        "EVALUATE\n"
+        f"TOPN({n},\n"
+        f"  FILTER(\n    {summarize},\n    {blank}\n  ),\n"
+        f"  [{value_alias}], DESC\n"
+        ")\n"
+        f"ORDER BY [{value_alias}] DESC"
     )

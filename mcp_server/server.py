@@ -5,7 +5,7 @@
 - stdio локально для разработки — `python3 -m mcp_server.server`
 
 LLM никогда не пишет DAX — только `get_available_metrics` /
-`get_metric_value` / `analyze_trend`.
+`get_metric_value` / `get_breakdown` / `analyze_trend` / `list_model_measures`.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from pbi_service_client import Config, PBIClient  # noqa: E402  (после sys.
 
 from mcp_server.critic import (  # noqa: E402
     build_trend_warnings,
+    calendar_month_bounds,
     check_low_confidence,
     check_single_month_required,
     compare_period_lengths,
@@ -31,12 +32,19 @@ from mcp_server.critic import (  # noqa: E402
     normalize_by_days,
     period_days,
     spans_single_month,
+    uses_year_month_key,
     year_month,
 )
 from mcp_server.dax_templates import (  # noqa: E402
     build_month_range_query,
     build_period_query,
     build_snapshot_query,
+    build_topn_query,
+)
+from mcp_server.model_catalog import (  # noqa: E402
+    ALLOWED_DATASETS,
+    measures_from_schema,
+    resolve_allowed_dataset,
 )
 from mcp_server.registry import find_metric, get_registry  # noqa: E402
 
@@ -66,11 +74,11 @@ _load_env_from_json_config()
 _cfg = Config.load()
 _client = PBIClient(_cfg)
 
-_http_auth, _http_verifier = build_http_auth()
+_http_auth, _oauth_provider = build_http_auth()
 _mcp_kwargs: dict = {}
-if _http_auth is not None and _http_verifier is not None:
+if _http_auth is not None and _oauth_provider is not None:
     _mcp_kwargs["auth"] = _http_auth
-    _mcp_kwargs["token_verifier"] = _http_verifier
+    _mcp_kwargs["auth_server_provider"] = _oauth_provider
 mcp = MCPServer("ask-pbi", **_mcp_kwargs)
 
 
@@ -89,6 +97,10 @@ def _public_metric(m) -> dict:
         "supported_filters": list(m.supported_filters),
         "notes": m.notes,
         "confirmed_on": m.confirmed_on,
+        "kind": m.kind,
+        "category_column": m.category_column,
+        "value_alias": m.value_alias,
+        "extra_value_aliases": [a for a, _ in m.extra_values],
     }
 
 
@@ -104,15 +116,90 @@ def _extract_value(result: dict) -> float | int | None:
 def get_available_metrics() -> dict:
     """Вернуть список подтверждённых бизнес-метрик Power BI (workspace KPI Team).
 
-    Это ЕДИНСТВЕННЫЙ способ узнать, какие метрики существуют — не пытайся
-    писать сырой DAX или изобретать metric_id. Метрики со status="broken"
-    намеренно оставлены в списке (не скрыты) — get_metric_value на них честно
-    откажет. Поле date_granularity ("month"/"day") — минимальный шаг периода,
-    который метрика реально поддерживает; multi_period_aggregatable=false
-    значит, что период обязан укладываться ровно в один такой шаг (см.
-    get_metric_value/analyze_trend).
+    Это ЕДИНСТВЕННЫЙ способ узнать, какие метрики можно ПОСЧИТАТЬ — не пытайся
+    писать сырой DAX или изобретать metric_id. kind="scalar" — одно число
+    (get_metric_value / analyze_trend). kind="ranking" — топ строк по категории
+    (только get_breakdown: страницы, источники, регионы). Метрики со
+    status="broken" намеренно оставлены в списке — get_metric_value на них
+    честно откажет.
+
+    Вопрос не из этого списка — вызови list_model_measures (справочник имён,
+    цифр не даёт). Не подставляй имя меры как metric_id и не пиши DAX.
     """
-    return {"ok": True, "metrics": [_public_metric(m) for m in get_registry()]}
+    return {
+        "ok": True,
+        "metrics": [_public_metric(m) for m in get_registry()],
+        "hint": (
+            "Считать можно только metric_id из этого списка. Если вопроса нет — "
+            "list_model_measures: скажи, есть ли такая мера в модели, и что "
+            "посчитать её пока нельзя (написать Михаилу). Не выдумывай DAX."
+        ),
+    }
+
+
+@mcp.tool()
+def list_model_measures(
+    dataset: str | None = None,
+    search: str | None = None,
+    include_hidden: bool = False,
+) -> dict:
+    """Справочник именованных мер семантической модели (только имена).
+
+    НЕ считает цифры и НЕ заменяет get_available_metrics. Вызывай, если вопроса
+    нет в каталоге подтверждённых метрик: есть ли такая мера в Power BI.
+
+    Правила:
+    - Имена отсюда НЕЛЬЗЯ передавать в get_metric_value как metric_id.
+    - НЕ пиши DAX по этим именам — даже если мера выглядит подходящей.
+    - in_registry=true → считай через get_available_metrics / get_metric_value.
+    - in_registry=false → честно скажи: мера в модели есть, но ещё не подключена;
+      посчитать нельзя; пусть напишут Михаилу.
+    - Пустой список по search → такой именованной меры нет (визуал мог быть
+      SUM колонки без меры — это тоже «пока не считаем»).
+    dataset — одно из: KPI marketing view (по умолчанию), KPI medicine view,
+    KPI team admin view. search — подстрока в имени/таблице (например «химио»,
+    «сарафан», «CR»).
+    """
+    allowed = resolve_allowed_dataset(dataset)
+    if allowed is None:
+        return {
+            "ok": False,
+            "reason": "dataset_not_allowed",
+            "detail": (
+                f"Датасет «{dataset}» вне периметра. Разрешены только: "
+                + ", ".join(ALLOWED_DATASETS)
+            ),
+            "allowed_datasets": list(ALLOWED_DATASETS),
+        }
+    try:
+        resolved = _client.resolve_dataset(allowed, WORKSPACE_HINT)
+        schema = _client.discover_schema(
+            resolved["group_id"], resolved["dataset_id"], scope="measures"
+        )
+    except RuntimeError as e:
+        return {"ok": False, "reason": "schema_discover_failed", "detail": str(e)}
+
+    measures = measures_from_schema(
+        schema, include_hidden=include_hidden, search=search
+    )
+    in_reg = sum(1 for m in measures if m["in_registry"])
+    return {
+        "ok": True,
+        "dataset": resolved["dataset"],
+        "search": search,
+        "measures": measures,
+        "counts": {
+            "returned": len(measures),
+            "in_registry": in_reg,
+            "not_in_registry": len(measures) - in_reg,
+        },
+        "note": (
+            "Только имена мер, без формул и без цифр. Считать можно лишь "
+            "metric_id из get_available_metrics. Часть каталога (посетители/"
+            "просмотры сайта, топы страниц) — SUM колонок, их здесь не будет. "
+            "Меру не из реестра не считай и не подставляй в другие инструменты."
+        ),
+    }
 
 
 @mcp.tool()
@@ -154,6 +241,15 @@ def get_metric_value(
             "reason": "metric_unverified",
             "detail": "Эта метрика ни разу не проверена живым запросом — использовать нельзя.",
         }
+    if metric.kind == "ranking":
+        return {
+            "ok": False,
+            "reason": "use_get_breakdown",
+            "detail": (
+                f"Метрика '{metric_id}' — топ по категории, не одно число. "
+                "Вызови get_breakdown с этим metric_id и top_n."
+            ),
+        }
     if not metric.date_aware and (start_date or end_date):
         return {
             "ok": False,
@@ -182,27 +278,40 @@ def get_metric_value(
 
     if start_date is None:
         query = build_snapshot_query(metric.measure_dax_name)
-    elif metric.date_granularity == "month":
+    elif metric.date_granularity in ("month", "day"):
         refusal = check_single_month_required(metric.multi_period_aggregatable, start_date, end_date)
         if refusal is not None:
             return refusal
-        ym_start, ym_end = year_month(start_date), year_month(end_date)
-        query = build_month_range_query(metric.measure_dax_name, metric.date_table, ym_start, ym_end)
-        period = {"start_date": start_date, "end_date": end_date, "label": f"{ym_start}..{ym_end}"}
-        first_of_month = start_date[:8] + "01"
-        if start_date != first_of_month or not _is_month_end(end_date):
-            warnings.append(
-                f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
-                f"округлён до {ym_start}..{ym_end} целиком."
+        if metric.date_granularity == "month":
+            ym_start, ym_end = year_month(start_date), year_month(end_date)
+            first_of_month = start_date[:8] + "01"
+            if start_date != first_of_month or not _is_month_end(end_date):
+                warnings.append(
+                    f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
+                    f"округлён до {ym_start}..{ym_end} целиком."
+                )
+            period = {"start_date": start_date, "end_date": end_date, "label": f"{ym_start}..{ym_end}"}
+            if uses_year_month_key(metric.date_table):
+                query = build_month_range_query(
+                    metric.measure_dax_name, metric.date_table, ym_start, ym_end
+                )
+            else:
+                bound_start, bound_end = calendar_month_bounds(start_date, end_date)
+                query = build_period_query(
+                    metric.measure_dax_name, metric.date_table, bound_start, bound_end
+                )
+        else:
+            query = build_period_query(
+                metric.measure_dax_name,
+                metric.date_table,
+                date_cls.fromisoformat(start_date),
+                date_cls.fromisoformat(end_date),
             )
-    elif metric.date_granularity == "day":
-        query = build_period_query(
-            metric.measure_dax_name,
-            metric.date_table,
-            date_cls.fromisoformat(start_date),
-            date_cls.fromisoformat(end_date),
-        )
-        period = {"start_date": start_date, "end_date": end_date, "label": f"{start_date}..{end_date}"}
+            period = {
+                "start_date": start_date,
+                "end_date": end_date,
+                "label": f"{start_date}..{end_date}",
+            }
     else:
         return {
             "ok": False,
@@ -236,6 +345,149 @@ def _is_month_end(iso_date: str) -> bool:
     return d == last_day
 
 
+def _extract_breakdown_rows(result: dict, metric) -> list[dict]:
+    raw = result.get("results", [{}])[0].get("tables", [{}])[0].get("rows", [])
+    short = (metric.category_column or "").split("[")[-1].rstrip("]")
+    aliases = [metric.value_alias, *[a for a, _ in metric.extra_values]]
+    out: list[dict] = []
+    for row in raw:
+        category = None
+        values: dict = {}
+        for k, v in row.items():
+            k_stripped = k.strip("[]")
+            if k.endswith(f"[{short}]") or k_stripped == short:
+                category = v
+                continue
+            alias = k_stripped
+            if alias in aliases:
+                values[alias] = v
+        item = {"category": category, metric.value_alias: values.get(metric.value_alias)}
+        for a, _ in metric.extra_values:
+            item[a] = values.get(a)
+        out.append(item)
+    return out
+
+
+@mcp.tool()
+def get_breakdown(
+    metric_id: str,
+    top_n: int = 10,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Топ строк по категории (страницы, источники, регионы, кампании).
+
+    Только для метрик с kind="ranking" из get_available_metrics.
+    top_n — от 1 до 20 (больше обрежется). start_date/end_date вместе или никакие.
+    Не пиши DAX и не подставляй имена колонок сам — только metric_id.
+    Для вопросов вроде «топ-3 страниц входа» / «какие лендинги принесли больше
+    всего лидов» — этот инструмент, не get_metric_value.
+    """
+    metric = find_metric(metric_id)
+    if metric is None:
+        return {
+            "ok": False,
+            "reason": "metric_not_found",
+            "detail": f"metric_id '{metric_id}' не найден — сначала get_available_metrics.",
+        }
+    if metric.kind != "ranking":
+        return {
+            "ok": False,
+            "reason": "not_a_ranking",
+            "detail": (
+                f"'{metric_id}' — одно число (kind=scalar). Для топа возьми "
+                "метрику с kind=ranking (top_entry_pages, top_content_landings_by_leads, …)."
+            ),
+        }
+    if metric.status != "confirmed":
+        return {"ok": False, "reason": "metric_not_confirmed", "detail": metric.notes}
+    if not metric.date_aware and (start_date or end_date):
+        return {
+            "ok": False,
+            "reason": "not_date_filterable",
+            "detail": "У этого топа нет рабочей даты — вызови без start_date/end_date.",
+        }
+    if (start_date is None) != (end_date is None):
+        return {
+            "ok": False,
+            "reason": "invalid_period",
+            "detail": "start_date и end_date нужны вместе, либо ни одного.",
+        }
+
+    dataset_name = metric.datasets[0]
+    try:
+        resolved = _client.resolve_dataset(dataset_name, WORKSPACE_HINT)
+    except RuntimeError as e:
+        return {"ok": False, "reason": "dataset_resolve_failed", "detail": str(e)}
+
+    warnings: list[str] = []
+    start_d = date_cls.fromisoformat(start_date) if start_date else None
+    end_d = date_cls.fromisoformat(end_date) if end_date else None
+    period_label = (
+        "all_time_snapshot" if start_date is None else f"{start_date}..{end_date}"
+    )
+    if start_date and end_date:
+        refusal = check_single_month_required(
+            metric.multi_period_aggregatable, start_date, end_date
+        )
+        if refusal is not None:
+            return refusal
+    if start_date and end_date and metric.date_granularity == "month":
+        ym_start, ym_end = year_month(start_date), year_month(end_date)
+        period_label = f"{ym_start}..{ym_end}"
+        first_of_month = start_date[:8] + "01"
+        if start_date != first_of_month or not _is_month_end(end_date):
+            warnings.append(
+                f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
+                f"округлён до {ym_start}..{ym_end} целиком."
+            )
+        if uses_year_month_key(metric.date_table):
+            # TOPN пока умеет только DATE()-фильтр; YearMonth-ranking с датой
+            # в реестре пока нет. Отказ честный, а не молчаливый пустой топ.
+            return {
+                "ok": False,
+                "reason": "unsupported_ranking_date_key",
+                "detail": (
+                    "Топ с date_dim_month[YearMonth] пока не поддерживает фильтр "
+                    "по дате — вызови get_breakdown без start_date/end_date."
+                ),
+            }
+        start_d, end_d = calendar_month_bounds(start_date, end_date)
+    query = build_topn_query(
+        category_column=metric.category_column or "",
+        value_alias=metric.value_alias,
+        value_expr=metric.measure_dax_name,
+        extra_values=metric.extra_values,
+        top_n=top_n,
+        date_column=metric.date_table,
+        start_date=start_d,
+        end_date=end_d,
+        row_filter=metric.breakdown_row_filter,
+    )
+    try:
+        result = _client.execute_dax(resolved["group_id"], resolved["dataset_id"], query)
+    except RuntimeError as e:
+        return {"ok": False, "reason": "pbi_query_failed", "detail": str(e)}
+
+    rows = _extract_breakdown_rows(result, metric)
+    period = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "label": period_label,
+    }
+    return {
+        "ok": True,
+        "metric_id": metric.metric_id,
+        "category": metric.category_column,
+        "rows": rows,
+        "top_n": min(max(int(top_n), 1), 20),
+        "period": period,
+        "dataset": resolved["dataset"],
+        "warnings": warnings,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @mcp.tool()
 def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -> dict:
     """ОБЯЗАТЕЛЬНАЯ точка входа для ЛЮБОГО вопроса про динамику/тренд/сравнение
@@ -262,6 +514,12 @@ def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -
             "reason": "metric_not_found",
             "detail": f"metric_id '{metric_id}' не найден в реестре.",
         }
+    if metric.kind == "ranking":
+        return {
+            "ok": False,
+            "reason": "use_get_breakdown",
+            "detail": "Для топа по страницам/источникам используй get_breakdown, не analyze_trend.",
+        }
     if not metric.date_aware:
         return {
             "ok": False,
@@ -271,7 +529,7 @@ def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -
                 "запросом) — анализ динамики/тренда для неё невозможен."
             ),
         }
-    if metric.date_granularity == "month" and not metric.multi_period_aggregatable:
+    if not metric.multi_period_aggregatable:
         for label, p in (("current_period", current_period), ("previous_period", previous_period)):
             if not spans_single_month(p["start_date"], p["end_date"]):
                 return {
@@ -339,11 +597,76 @@ async def health(_request: Request) -> Response:
     return JSONResponse({"ok": True, "server": "ask-pbi"})
 
 
+@mcp.custom_route("/login", methods=["GET"])
+async def oauth_login(request: Request) -> Response:
+    if _oauth_provider is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    state = request.query_params.get("state") or ""
+    return _oauth_provider.login_page(state)
+
+
+@mcp.custom_route("/login/callback", methods=["POST"])
+async def oauth_login_callback(request: Request) -> Response:
+    if _oauth_provider is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    return await _oauth_provider.handle_login_callback(request)
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
+async def oauth_prm_alias(_request: Request) -> Response:
+    """Совместимость: некоторые клиенты ищут PRM без суффикса /mcp."""
+    if _http_auth is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    return JSONResponse(
+        {
+            "resource": str(_http_auth.resource_server_url),
+            "authorization_servers": [str(_http_auth.issuer_url)],
+            "scopes_supported": _http_auth.required_scopes,
+            "bearer_methods_supported": ["header"],
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@mcp.custom_route(
+    "/.well-known/oauth-authorization-server/mcp", methods=["GET", "OPTIONS"]
+)
+async def oauth_as_alias(_request: Request) -> Response:
+    """RFC 8414 path-aware discovery, если клиент ищет metadata от /mcp."""
+    if _http_auth is None:
+        return JSONResponse({"error": "oauth_disabled"}, status_code=404)
+    issuer = str(_http_auth.issuer_url).rstrip("/")
+    return JSONResponse(
+        {
+            "issuer": issuer,
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "registration_endpoint": f"{issuer}/register",
+            "revocation_endpoint": f"{issuer}/revoke",
+            "scopes_supported": _http_auth.required_scopes,
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [
+                "client_secret_post",
+                "client_secret_basic",
+                "none",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
 def main() -> None:
     transport = os.environ.get("ASKPBI_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http"):
         if not os.environ.get("ASKPBI_MCP_TOKEN", "").strip():
             sys.stderr.write("ERROR: ASKPBI_TRANSPORT=http требует ASKPBI_MCP_TOKEN\n")
+            sys.exit(2)
+        if not os.environ.get("ASKPBI_OAUTH_PASSWORD", "").strip():
+            sys.stderr.write(
+                "ERROR: ASKPBI_TRANSPORT=http требует ASKPBI_OAUTH_PASSWORD\n"
+            )
             sys.exit(2)
         mcp.run(
             transport="streamable-http",
