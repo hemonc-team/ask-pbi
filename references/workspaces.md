@@ -42,9 +42,12 @@ SKILL=~/ask-pbi
 |---|---|---|
 | KPI, KPI marketing, лиды, свежие контакты, fresh contact, конверсия fresh contact | KPI Team | KPI marketing view (пробуй первым — самая полная модель по лидам/контактам из allowed) |
 | посетители сайта, трафик, KPI marketing | KPI Team | KPI marketing view |
-| KPI по медицине, врачи, приёмы (командный KPI) | KPI Team | KPI medicine view |
+| KPI по медицине, Primary_Bookings, истинно отменённые 1c | KPI Team | KPI medicine view |
+| отмены записей, дошедшие, причины отмены, % отмен по врачам, admin KPI, записи на приём (П_), входящие КЦ, пропущенные звонки, онкологи, гематологи | KPI Team | KPI team admin view |
+| сарафан, уникальные пациенты с/без сарафана | KPI Team | KPI marketing view (или medicine) |
 | KPI team, административный KPI, командный KPI | KPI Team | KPI team admin view |
 
 Если фраза пользователя двусмысленна между `KPI medicine view` и `KPI team admin view`
-(обе подходят под «командный KPI») — уточни один раз, какая модель имеется в виду, а не
-гадай (пока обе не прогнаны через `discover-schema` и не описаны конкретные меры ниже).
+(обе подходят под «командный KPI») — уточни один раз. Для отмен/врачей/`П_*` —
+всегда admin; для `Primary_Bookings 1c` / `True_Canceled` — medicine (или admin,
+меры есть в обеих).

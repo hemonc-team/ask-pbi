@@ -24,6 +24,7 @@ from pbi_service_client import Config, PBIClient  # noqa: E402  (после sys.
 
 from mcp_server.critic import (  # noqa: E402
     build_trend_warnings,
+    calendar_month_bounds,
     check_low_confidence,
     check_single_month_required,
     compare_period_lengths,
@@ -31,6 +32,7 @@ from mcp_server.critic import (  # noqa: E402
     normalize_by_days,
     period_days,
     spans_single_month,
+    uses_year_month_key,
     year_month,
 )
 from mcp_server.dax_templates import (  # noqa: E402
@@ -276,27 +278,40 @@ def get_metric_value(
 
     if start_date is None:
         query = build_snapshot_query(metric.measure_dax_name)
-    elif metric.date_granularity == "month":
+    elif metric.date_granularity in ("month", "day"):
         refusal = check_single_month_required(metric.multi_period_aggregatable, start_date, end_date)
         if refusal is not None:
             return refusal
-        ym_start, ym_end = year_month(start_date), year_month(end_date)
-        query = build_month_range_query(metric.measure_dax_name, metric.date_table, ym_start, ym_end)
-        period = {"start_date": start_date, "end_date": end_date, "label": f"{ym_start}..{ym_end}"}
-        first_of_month = start_date[:8] + "01"
-        if start_date != first_of_month or not _is_month_end(end_date):
-            warnings.append(
-                f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
-                f"округлён до {ym_start}..{ym_end} целиком."
+        if metric.date_granularity == "month":
+            ym_start, ym_end = year_month(start_date), year_month(end_date)
+            first_of_month = start_date[:8] + "01"
+            if start_date != first_of_month or not _is_month_end(end_date):
+                warnings.append(
+                    f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
+                    f"округлён до {ym_start}..{ym_end} целиком."
+                )
+            period = {"start_date": start_date, "end_date": end_date, "label": f"{ym_start}..{ym_end}"}
+            if uses_year_month_key(metric.date_table):
+                query = build_month_range_query(
+                    metric.measure_dax_name, metric.date_table, ym_start, ym_end
+                )
+            else:
+                bound_start, bound_end = calendar_month_bounds(start_date, end_date)
+                query = build_period_query(
+                    metric.measure_dax_name, metric.date_table, bound_start, bound_end
+                )
+        else:
+            query = build_period_query(
+                metric.measure_dax_name,
+                metric.date_table,
+                date_cls.fromisoformat(start_date),
+                date_cls.fromisoformat(end_date),
             )
-    elif metric.date_granularity == "day":
-        query = build_period_query(
-            metric.measure_dax_name,
-            metric.date_table,
-            date_cls.fromisoformat(start_date),
-            date_cls.fromisoformat(end_date),
-        )
-        period = {"start_date": start_date, "end_date": end_date, "label": f"{start_date}..{end_date}"}
+            period = {
+                "start_date": start_date,
+                "end_date": end_date,
+                "label": f"{start_date}..{end_date}",
+            }
     else:
         return {
             "ok": False,
@@ -405,8 +420,39 @@ def get_breakdown(
     except RuntimeError as e:
         return {"ok": False, "reason": "dataset_resolve_failed", "detail": str(e)}
 
+    warnings: list[str] = []
     start_d = date_cls.fromisoformat(start_date) if start_date else None
     end_d = date_cls.fromisoformat(end_date) if end_date else None
+    period_label = (
+        "all_time_snapshot" if start_date is None else f"{start_date}..{end_date}"
+    )
+    if start_date and end_date:
+        refusal = check_single_month_required(
+            metric.multi_period_aggregatable, start_date, end_date
+        )
+        if refusal is not None:
+            return refusal
+    if start_date and end_date and metric.date_granularity == "month":
+        ym_start, ym_end = year_month(start_date), year_month(end_date)
+        period_label = f"{ym_start}..{ym_end}"
+        first_of_month = start_date[:8] + "01"
+        if start_date != first_of_month or not _is_month_end(end_date):
+            warnings.append(
+                f"Гранулярность этой метрики — календарный месяц: запрошенный частичный период "
+                f"округлён до {ym_start}..{ym_end} целиком."
+            )
+        if uses_year_month_key(metric.date_table):
+            # TOPN пока умеет только DATE()-фильтр; YearMonth-ranking с датой
+            # в реестре пока нет. Отказ честный, а не молчаливый пустой топ.
+            return {
+                "ok": False,
+                "reason": "unsupported_ranking_date_key",
+                "detail": (
+                    "Топ с date_dim_month[YearMonth] пока не поддерживает фильтр "
+                    "по дате — вызови get_breakdown без start_date/end_date."
+                ),
+            }
+        start_d, end_d = calendar_month_bounds(start_date, end_date)
     query = build_topn_query(
         category_column=metric.category_column or "",
         value_alias=metric.value_alias,
@@ -416,6 +462,7 @@ def get_breakdown(
         date_column=metric.date_table,
         start_date=start_d,
         end_date=end_d,
+        row_filter=metric.breakdown_row_filter,
     )
     try:
         result = _client.execute_dax(resolved["group_id"], resolved["dataset_id"], query)
@@ -426,7 +473,7 @@ def get_breakdown(
     period = {
         "start_date": start_date,
         "end_date": end_date,
-        "label": "all_time_snapshot" if start_date is None else f"{start_date}..{end_date}",
+        "label": period_label,
     }
     return {
         "ok": True,
@@ -436,6 +483,7 @@ def get_breakdown(
         "top_n": min(max(int(top_n), 1), 20),
         "period": period,
         "dataset": resolved["dataset"],
+        "warnings": warnings,
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -481,7 +529,7 @@ def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -
                 "запросом) — анализ динамики/тренда для неё невозможен."
             ),
         }
-    if metric.date_granularity == "month" and not metric.multi_period_aggregatable:
+    if not metric.multi_period_aggregatable:
         for label, p in (("current_period", current_period), ("previous_period", previous_period)):
             if not spans_single_month(p["start_date"], p["end_date"]):
                 return {

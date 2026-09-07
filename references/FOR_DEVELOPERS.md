@@ -1,10 +1,13 @@
 # Техническая документация (dev)
 
 Репозиторий [`ask-pbi`](https://github.com/hemonc-team/ask-pbi) — marketing-контур.
-Как пользоваться и как выкатить на DWH — в [`README.md`](../README.md).
+Как пользоваться — [`README.md`](../README.md).
+Как устроен сервис целиком — [`ARCHITECTURE.md`](ARCHITECTURE.md).
 Dev (патч `.pbix`, publish) — [`pbi-patch-factory`](https://github.com/hemonc-team/pbi-patch-factory).
 
-## Архитектура
+## Архитектура (кратко)
+
+Подробности и схема слоёв — в [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 HTTP MCP на DWH (`https://pbi.hemonc.ru/mcp`). Claude Desktop ходит туда по
 OAuth (custom connector): discovery → DCR → `/authorize` → страница логина

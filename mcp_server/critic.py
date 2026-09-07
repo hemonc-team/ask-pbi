@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 LOW_CONFIDENCE_THRESHOLD = 20  # знаменатель меньше этого — считаем результат ненадёжным
 
@@ -23,6 +23,32 @@ def year_month(iso_date: str) -> str:
 
 def spans_single_month(start_date: str, end_date: str) -> bool:
     return year_month(start_date) == year_month(end_date)
+
+
+def uses_year_month_key(date_table: str | None) -> bool:
+    """True, если колонка дат — текстовый YearMonth ("YYYY-MM"), а не Date.
+
+    У island-таблиц Метрики (`[Месяц визита]`, `[Месяц]`) ключ — Date на 1-е
+    число месяца; фильтр строкой "YYYY-MM" там ломается.
+    """
+    return bool(date_table) and "YearMonth" in date_table
+
+
+def calendar_month_bounds(start_date: str, end_date: str) -> tuple[date, date]:
+    """Округление произвольного диапазона до целых календарных месяцев.
+
+    2026-08-24..2026-08-30 → 2026-08-01..2026-08-31.
+    Нужно для month-grain таблиц с Date-якорем на 1-е число: иначе частичный
+    период внутри месяца не захватывает якорь и отдаёт пусто.
+    """
+    y1, m1 = (int(p) for p in start_date[:7].split("-"))
+    y2, m2 = (int(p) for p in end_date[:7].split("-"))
+    start = date(y1, m1, 1)
+    if m2 == 12:
+        end = date(y2, 12, 31)
+    else:
+        end = date(y2, m2 + 1, 1) - timedelta(days=1)
+    return start, end
 
 
 def month_count(start_date: str, end_date: str) -> int:
