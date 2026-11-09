@@ -83,6 +83,8 @@
 | `top_search_engines` | Поисковая система | посетители | Месяц визита (month) |
 | `top_social_networks` | Cоциальная сеть | посетители | Месяц визита (month) |
 | `top_direct_campaigns` | Кампания Директа | посетители | Месяц визита (month) |
+| `top_regional_oblasts_by_clicks` | Область воронки | клики + визиты/звонки/лиды/записи/расход | день |
+| `top_regional_campaigns_by_clicks` | Кампания воронки | клики + те же extra | день |
 | `top_lead_sources` | Лиды✅[Источник] | [Лиды, шт.] | нет |
 | `top_cancellation_reasons` | ПричиныОтменыЗаписи[Наименование] | [П_Отмены] + share | день (admin) |
 | `top_doctors_by_bookings` | Специалисты[НаименованиеПолное] | [П_Записи] + cancels/% | день (admin) |
@@ -91,6 +93,33 @@
 | `top_doctors_by_sarafan_patients` | Специалисты[Наименование пользователей] | with+without сарафан | день |
 | `top_visitors_by_gender` | демография[Пол] | посетители | месяц (якорь) |
 | `top_direct_search_phrases` | Директ[Поисковая фраза] | посетители | месяц (якорь) |
+| `smm_by_network` | Соцсети по месяцам✅[Сеть] | подписчики на конец периода + growth/posts/reach/reactions | месяц (MonthStartDate) |
+
+**Marketing — соцсети (`KPI marketing view`, `Соцсети по месяцам✅` = `dwh.smm_monthly`, месяц, #26158):**
+
+| metric_id | Мера | Что считает | multi-period |
+|---|---|---|---|
+| `smm_followers` | `[Соцсети подписчики]` | подписчики 4 сетей на конец периода (не сумма) | ✅ |
+| `smm_followers_growth` | `[Соцсети прирост подписчиков]` | конец периода − конец месяца перед ним; без дат пусто | ✅ |
+| `smm_posts` | `[Соцсети посты]` | сумма постов | ✅ |
+| `smm_reach` | `[Соцсети охват]` | сумма помесячного охвата (TG = просмотры, ВК с 10.2026 = 0) | ✅ |
+| `smm_reactions` | `[Соцсети реакции]` | лайки+комментарии+репосты+сохранения (ВК нет, FB/TG пусто 03.2025–09.2026) | ✅ |
+
+Одна сеть и сравнение сетей — `smm_by_network` (get_breakdown): фильтра по сети в `get_metric_value` нет. «Лето против весны по Telegram» — два вызова `get_breakdown` по периодам.
+
+**Marketing — региональная воронка (`KPI marketing view`, island `Региональная воронка✅`, день):**
+
+| metric_id | Мера | multi-period |
+|---|---|---|
+| `regional_clicks_count` | `SUM(…[Клики])` | ✅ |
+| `regional_visits_count` | `SUM(…[Визиты])` | ✅ |
+| `regional_calls_count` | `SUM(…[Звонки])` | ✅ |
+| `regional_leads_count` | `SUM(…[Лиды CRM])` | ✅ |
+| `regional_bookings_count` | `SUM(…[Записи])` | ✅ |
+| `regional_cost_rub` | `SUM(…[Расход])` | ✅ |
+| `regional_cr_calls_high_pct` | `[CR звонки high]` (доля 0–1) | ✅ DIVIDE сумм |
+
+Не путать с `top_regions` / `top_direct_campaigns` (посетители Метрики) и с пустым `Лиды✅[Область]`. Источник — `dwh.marketing_regional_funnel_daily`. В опубликованной модели на 2026-10-30 M ещё режет пилот `705957657`; в DWH 42 кампании.
 
 **Волна 2 (2026-09-03):** КЦ (`incoming_calls_*`, дата = `CALL_START_TIME`), онко/гемато записи, сарафан (акты), пол демографии, фразы Директа. **CPC в модели нет.**
 

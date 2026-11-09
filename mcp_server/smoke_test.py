@@ -149,12 +149,79 @@ def _check_month_grain_registry() -> None:
         row_filter="[П_Записи] >= 50",
     )
     assert "[П_Записи] >= 50" in tq
+
+    for mid in (
+        "regional_clicks_count",
+        "regional_visits_count",
+        "regional_calls_count",
+        "regional_leads_count",
+        "regional_bookings_count",
+        "regional_cost_rub",
+        "regional_cr_calls_high_pct",
+        "top_regional_oblasts_by_clicks",
+        "top_regional_campaigns_by_clicks",
+    ):
+        m = find_metric(mid)
+        assert m is not None, mid
+        assert m.date_granularity == "day", mid
+        assert m.datasets == ("KPI marketing view",), mid
+        assert m.date_table == "'Региональная воронка✅'[Дата]", mid
+        assert m.multi_period_aggregatable is True, mid
+    assert find_metric("top_regional_campaigns_by_clicks").kind == "ranking"
+    assert find_metric("regional_cr_calls_high_pct").measure_dax_name == "[CR звонки high]"
+    smm = (
+        "smm_followers",
+        "smm_followers_growth",
+        "smm_posts",
+        "smm_reach",
+        "smm_reactions",
+        "smm_by_network",
+    )
+    for mid in smm:
+        m = find_metric(mid)
+        assert m is not None, mid
+        assert m.date_granularity == "month" and m.multi_period_aggregatable is True, mid
+        assert m.datasets == ("KPI marketing view",), mid
+    for mid in smm[:-1]:
+        assert find_metric(mid).date_table == "date_dim_month[YearMonth]", mid
+    net = find_metric("smm_by_network")
+    assert net.kind == "ranking" and net.date_table == "date_dim_month[MonthStartDate]"
+    assert [a for a, _ in net.extra_values] == ["growth", "posts", "reach", "reactions"]
     print("ok month-grain registry")
+
+
+def _smm_scenarios() -> None:
+    """Соцсети (#26158): контрольные цифры — pbi docs/domain/СОЦСЕТИ_визуалы_и_ask-pbi_TZ.md §3.4."""
+    _p(
+        "get_metric_value('smm_followers', Q3 2026)  — ожидаем 17878 (на конец сентября)",
+        get_metric_value("smm_followers", "2026-07-01", "2026-09-30"),
+    )
+    _p(
+        "get_metric_value('smm_followers_growth', 2025)  — ожидаем +4125",
+        get_metric_value("smm_followers_growth", "2025-01-01", "2025-12-31"),
+    )
+    _p(
+        "get_breakdown('smm_by_network', весна 2026)  — Telegram growth +57",
+        get_breakdown("smm_by_network", 10, "2026-03-01", "2026-05-31"),
+    )
+    _p(
+        "get_breakdown('smm_by_network', лето 2026)  — Telegram growth −7",
+        get_breakdown("smm_by_network", 10, "2026-06-01", "2026-08-31"),
+    )
+    _p(
+        "analyze_trend('smm_posts', лето vs весна 2026)",
+        analyze_trend(
+            "smm_posts",
+            {"start_date": "2026-06-01", "end_date": "2026-08-31"},
+            {"start_date": "2026-03-01", "end_date": "2026-05-31"},
+        ),
+    )
 
 
 def main() -> None:
     _check_catalog_helpers()
     _check_month_grain_registry()
+    _smm_scenarios()
     _p("get_available_metrics()", get_available_metrics())
 
     _p(
@@ -307,6 +374,28 @@ def main() -> None:
         get_metric_value("top_entry_pages"),
     )
 
+    _p(
+        "get_metric_value('regional_clicks_count')  — ожидаем ok:true, ~14378",
+        get_metric_value("regional_clicks_count"),
+    )
+    _p(
+        "get_metric_value('regional_clicks_count', 20.07–10.08.2026)  — ожидаем ~1495",
+        get_metric_value("regional_clicks_count", "2026-07-20", "2026-08-10"),
+    )
+    _p(
+        "get_breakdown('top_regional_campaigns_by_clicks', 5)",
+        get_breakdown("top_regional_campaigns_by_clicks", 5),
+    )
+    _p(
+        "get_breakdown('top_regional_oblasts_by_clicks', 5, июль 2026)",
+        get_breakdown(
+            "top_regional_oblasts_by_clicks", 5, "2026-07-01", "2026-07-31"
+        ),
+    )
+    _p(
+        "list_model_measures(search='CR звонки')  — ожидаем in_registry true",
+        list_model_measures(search="CR звонки"),
+    )
     _p(
         "list_model_measures(search='свежих')  — ожидаем in_registry true, Количество свежих контактов",
         list_model_measures(search="свежих"),

@@ -887,6 +887,322 @@ REGISTRY: list[Metric] = [
         ),
         confirmed_on="2026-09-03",
     ),
+    # --- KPI marketing view: региональная воронка Директа (island) ---
+    Metric(
+        metric_id="regional_clicks_count",
+        display_name="Клики региональной воронки Директа",
+        description=(
+            "Клики Яндекс.Директа из витрины «Региональная воронка» "
+            "(область × кампания × день). Не топ посетителей Метрики."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Клики])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes=(
+            "Island dwh.marketing_regional_funnel_daily. Live 2026-10-30: "
+            "все время=14378 (в опубликованной модели пока пилот 705957657). "
+            "Окно #24396 20.07–10.08.2026=1495. Не city Calltouch и не top_regions."
+        ),
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_visits_count",
+        display_name="Визиты региональной воронки",
+        description="Визиты Метрики в срезе региональной воронки Директа (гео визита).",
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Визиты])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes="Live 2026-10-30 snapshot=2564 (пилот 705957657).",
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_calls_count",
+        display_name="Звонки региональной воронки",
+        description=(
+            "Обращения Calltouch после атрибуции DWH в региональной воронке. "
+            "Не city Calltouch."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Звонки])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes="Live 2026-10-30 snapshot=420. «Звонки high» — отдельная колонка.",
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_leads_count",
+        display_name="Лиды CRM региональной воронки",
+        description="Лиды Bitrix, привязанные DWH к области и кампании Директа.",
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Лиды CRM])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes="Live 2026-10-30 snapshot=262. Не Лиды✅[Область] — то поле пустое.",
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_bookings_count",
+        display_name="Записи региональной воронки",
+        description="Записи 1С (e1cib) в региональной воронке Директа.",
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Записи])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes="Live 2026-10-30 snapshot=107. Не content_bookings_count (лендинги).",
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_cost_rub",
+        display_name="Расход Директа региональной воронки, ₽",
+        description="Расход Яндекс.Директа (руб.) в срезе области × кампании.",
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Расход])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes="Live 2026-10-30 snapshot≈536139. CPC как отдельной меры в модели нет.",
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="regional_cr_calls_high_pct",
+        display_name="CR звонки high региональной воронки",
+        description=(
+            "Доля 0–1: звонки high / визиты в текущем срезе. "
+            "Не использовать при малом числе обращений (n<5)."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[CR звонки high]",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        notes=(
+            "DIVIDE(SUM звонки high, SUM визиты). Live snapshot≈0.0335. "
+            "Не путать с top_regions (посетители Метрики)."
+        ),
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="top_regional_oblasts_by_clicks",
+        display_name="Топ областей региональной воронки",
+        description=(
+            "Области Директа (канон витрины) по кликам, с визитами/звонками/"
+            "лидами/записями. get_breakdown. Не география сайта Метрики."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Клики])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        kind="ranking",
+        category_column="'Региональная воронка✅'[Область]",
+        value_alias="clicks",
+        extra_values=(
+            ("visits", "SUM('Региональная воронка✅'[Визиты])"),
+            ("calls", "SUM('Региональная воронка✅'[Звонки])"),
+            ("calls_high", "SUM('Региональная воронка✅'[Звонки high])"),
+            ("leads", "SUM('Региональная воронка✅'[Лиды CRM])"),
+            ("bookings", "SUM('Региональная воронка✅'[Записи])"),
+            ("cost", "SUM('Региональная воронка✅'[Расход])"),
+        ),
+        notes=(
+            "Live 2026-10-30: Москва И 11475 кликов / 203 лида; unknown — бакет "
+            "атрибуции, не пусто. Не city Calltouch. «Москва И» — имя из dim."
+        ),
+        confirmed_on="2026-10-30",
+    ),
+    Metric(
+        metric_id="top_regional_campaigns_by_clicks",
+        display_name="Топ региональных кампаний Директа",
+        description=(
+            "Кампании Директа из региональной воронки по кликам, с визитами/"
+            "звонками/лидами/записями. get_breakdown. Не top_direct_campaigns "
+            "(посетители Метрики)."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="SUM('Региональная воронка✅'[Клики])",
+        date_aware=True,
+        date_table="'Региональная воронка✅'[Дата]",
+        date_granularity="day",
+        multi_period_aggregatable=True,
+        kind="ranking",
+        category_column="'Региональная воронка✅'[Кампания]",
+        value_alias="clicks",
+        extra_values=(
+            ("visits", "SUM('Региональная воронка✅'[Визиты])"),
+            ("calls", "SUM('Региональная воронка✅'[Звонки])"),
+            ("calls_high", "SUM('Региональная воронка✅'[Звонки high])"),
+            ("leads", "SUM('Региональная воронка✅'[Лиды CRM])"),
+            ("bookings", "SUM('Региональная воронка✅'[Записи])"),
+            ("cost", "SUM('Региональная воронка✅'[Расход])"),
+        ),
+        notes=(
+            "Live 2026-10-30 в Service: одна кампания 705957657 (M-фильтр пилота). "
+            "В DWH 42 кампании; после Replace M без фильтра топ станет полным. "
+            "ID кампании — текст, как в Директе."
+        ),
+        confirmed_on="2026-10-30",
+    ),
+    # --- KPI marketing view: статистика соцсетей (#26158) ---
+    # Источник: «Соцсети по месяцам✅» = dwh.smm_monthly (лист «По месяцам» Google-таблицы
+    # соцсетей). Меры — вкладка «Соцсети» (pbi expressions/Соцсети_меры.dax). Зерно — месяц.
+    # Одна сеть / сравнение сетей — smm_by_network (get_breakdown): фильтра по сети у
+    # get_metric_value нет. Сравнение двух периодов по одной сети — два вызова get_breakdown.
+    Metric(
+        metric_id="smm_followers",
+        display_name="Подписчики соцсетей (все 4 сети)",
+        description=(
+            "Подписчики ВКонтакте + Facebook + Instagram + Telegram на КОНЕЦ периода "
+            "(значение за последний месяц периода, не сумма по месяцам). Одна сеть — "
+            "get_breakdown('smm_by_network'). Без дат — на последний собранный месяц."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети подписчики]",
+        date_aware=True,
+        date_table="date_dim_month[YearMonth]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Остаток на дату: в analyze_trend смотри delta_absolute, среднедневное "
+            "(normalized) для подписчиков бессмысленно. Live 2026-11-07: Q3 2026 = 17878, "
+            "2025 = 16758 (на конец декабря). Текущий месяц неполный (данные на дату сбора)."
+        ),
+        confirmed_on="2026-11-07",
+    ),
+    Metric(
+        metric_id="smm_followers_growth",
+        display_name="Прирост подписчиков соцсетей (все 4 сети)",
+        description=(
+            "Прирост подписчиков за период: подписчики на конец периода минус на конец "
+            "месяца перед периодом (бывает минус — отписки). Обязательно с датами: без "
+            "дат пусто. Одна сеть — get_breakdown('smm_by_network'), поле growth."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети прирост подписчиков]",
+        date_aware=True,
+        date_table="date_dim_month[YearMonth]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Считается разницей подписчиков, не строкой «Прирост» Google-таблицы (та за "
+            "10–11.2026 неверна — ошибка сборщика). Ноябрь 2025: Instagram +1734 — вирусный "
+            "пост, не ошибка. Live 2026-11-07: Q3 2026 = +10, 2025 = +4125."
+        ),
+        confirmed_on="2026-11-07",
+    ),
+    Metric(
+        metric_id="smm_posts",
+        display_name="Посты в соцсетях (все 4 сети)",
+        description="Сумма постов за период по 4 сетям. Одна сеть — get_breakdown('smm_by_network'), поле posts.",
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети посты]",
+        date_aware=True,
+        date_table="date_dim_month[YearMonth]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Live 2026-11-07: Q3 2026 = 124, 2025 = 616, октябрь 2026 = 37.",
+        confirmed_on="2026-11-07",
+    ),
+    Metric(
+        metric_id="smm_reach",
+        display_name="Охват публикаций в соцсетях (все 4 сети)",
+        description=(
+            "Сумма помесячного охвата публикаций за период. У Telegram охвата нет — это "
+            "просмотры. Охват ВКонтакте с октября 2026 не собирается (0). Одна сеть — "
+            "get_breakdown('smm_by_network'), поле reach."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети охват]",
+        date_aware=True,
+        date_table="date_dim_month[YearMonth]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Сумма по месяцам: один человек может быть посчитан в нескольких месяцах. "
+            "Ноябрь 2025 — Instagram 387562 (вирусный пост). Live 2026-11-07: Q3 2026 = 110564, "
+            "2025 = 1183748."
+        ),
+        confirmed_on="2026-11-07",
+    ),
+    Metric(
+        metric_id="smm_reactions",
+        display_name="Реакции в соцсетях",
+        description=(
+            "Лайки + комментарии + репосты + сохранения за период. Реакции ВКонтакте не "
+            "собираются; у Facebook и Telegram нет данных за март 2025 — сентябрь 2026 — "
+            "сравнивать годы нельзя, предупреди. Одна сеть — get_breakdown('smm_by_network')."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети реакции]",
+        date_aware=True,
+        date_table="date_dim_month[YearMonth]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Live 2026-11-07: Q3 2026 = 854 (только Instagram), 2025 = 30446.",
+        confirmed_on="2026-11-07",
+    ),
+    Metric(
+        metric_id="smm_by_network",
+        display_name="Соцсети по сетям: подписчики, прирост, посты, охват, реакции",
+        description=(
+            "Строка на каждую сеть (ВКонтакте, Facebook, Instagram, Telegram): followers "
+            "(на конец периода), growth (прирост за период), posts, reach, reactions. "
+            "get_breakdown. Вопрос про одну сеть — бери её строку. Сравнение периодов "
+            "(«лето против весны») — два вызова get_breakdown, по одному на период, и "
+            "разница growth/posts/… Прирост без дат пуст — всегда задавай период."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Соцсети подписчики]",
+        date_aware=True,
+        date_table="date_dim_month[MonthStartDate]",
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        kind="ranking",
+        category_column="'Соцсети по месяцам✅'[Сеть]",
+        value_alias="followers",
+        extra_values=(
+            ("growth", "[Соцсети прирост подписчиков]"),
+            ("posts", "[Соцсети посты]"),
+            ("reach", "[Соцсети охват]"),
+            ("reactions", "[Соцсети реакции]"),
+        ),
+        notes=(
+            "Дата для топа — MonthStartDate (date), не YearMonth: get_breakdown с YearMonth "
+            "отказывает. Live 2026-11-07: прирост весна 2026 (мар–май) Instagram +97, "
+            "Telegram +57, Facebook +49, ВКонтакте −48; лето 2026 (июн–авг) ВКонтакте +30, "
+            "Facebook −1, Instagram −2, Telegram −7. Охват ВК с 10.2026 = 0, реакций ВК нет."
+        ),
+        confirmed_on="2026-11-07",
+    ),
 ]
 
 
