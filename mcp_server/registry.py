@@ -51,6 +51,24 @@ class Metric:
     breakdown_row_filter: str | None = None
 
 
+# «Рост контактов»: общие определения для описаний метрик (их читает LLM маркетолога).
+_GROWTH_MONTH = "'Рост месяц✅'[Месяц (рост)]"
+_GROWTH_COHORT_COL = "'Рост когорты✅'[Когорта публикации]"
+_GROWTH_TERMS = (
+    "Страница PBI «Рост контактов» (проект: статьи под ситуацию пациента или близкого "
+    "должны приводить новых людей минимум на 50% лучше обычных статей фабрики). "
+    "Новый контакт — первое обращение человека в клинику с 2024 года (целевой звонок, "
+    "заявка «Перезвоните мне» или запись через сайт). Вход — страница, с которой начался "
+    "визит на сайт, в котором человек обратился. Проект — статьи полки «рост-контактов»; "
+    "контроль — обычные статьи фабрики; легаси — старые статьи сайта вне фабрики; "
+    "прочее — главная, врачи, услуги. Данные с 29.06.2026."
+)
+_GROWTH_REF = "Рост контактов (термины: вход, проект, контроль — в growth_new_contacts)."
+_GROWTH_COHORT = (
+    "Метрика по когортам: start_date/end_date — месяц ПУБЛИКАЦИИ статей (когорта), "
+    "а не месяц обращения. Проект и контроль сравниваются на статьях одного возраста."
+)
+
 REGISTRY: list[Metric] = [
     Metric(
         metric_id="fresh_contacts_count",
@@ -1202,6 +1220,298 @@ REGISTRY: list[Metric] = [
             "Facebook −1, Instagram −2, Telegram −7. Охват ВК с 10.2026 = 0, реакций ВК нет."
         ),
         confirmed_on="2026-11-07",
+    ),
+    # --- «Рост контактов» (Фабрика роста новых контактов), KPI marketing view ---
+    # Страница PBI «Рост контактов»; данные считает DWH (dwh.v_growth_*), с 29.06.2026.
+    # Месячные метрики — дата через справочник 'Рост месяц✅'[Месяц (рост)]
+    # (Date, 1-е число месяца обращения). Когортные — через 'Рост когорты✅'
+    # [Когорта публикации] (Date, 1-е число месяца публикации статьи): у таблицы
+    # когорт нет связи с месяцем обращения, период для них = месяц публикации.
+    Metric(
+        metric_id="growth_new_contacts",
+        display_name="Новые контакты клиники (рост контактов)",
+        description=(
+            f"{_GROWTH_TERMS} Сколько новых контактов было в месяце обращения — по всем "
+            "страницам входа, включая обращения без связанного визита на сайт. Итог клиники, "
+            "не только статьи."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Новые контакты (рост)]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Мера страницы «Рост контактов», SUM по 'Рост по месяцам✅'. Данные с 29.06.2026. "
+            "Разрезы по группе/направлению в ask-pbi не подключены — группы смотри в "
+            "growth_groups_by_new_contacts."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_project_new_contacts",
+        display_name="Новые контакты проекта (вход через проектную статью)",
+        description=(
+            f"{_GROWTH_REF} Сколько новых контактов вошли на сайт через проектную статью "
+            "(полка «рост-контактов») в месяце обращения. Главное число проекта. Пусто, пока "
+            "проектные статьи не опубликованы."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Новые контакты проекта]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Мера = [Новые контакты (рост)] с группой «project». Все направления (DP, SEG, RP) "
+            "вместе — разрез по направлению в ask-pbi не подключён."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_project_weighted_kpi",
+        display_name="Взвешенный KPI проекта",
+        description=(
+            f"{_GROWTH_REF} Баллы проектных статей в визитах новых контактов: статья — вход "
+            "визита = 1 балл, статья в середине пути = 0,5 балла, на человека не больше 1. "
+            "Дополнительное число к «Новым контактам проекта»: учитывает статьи, которые "
+            "помогли, не будучи входом. Пусто, пока проектные статьи не опубликованы."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Взвешенный KPI проекта]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Дробное число (шаг 0,5). Месяц — месяц обращения.",
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_project_per_1000_entries",
+        display_name="Новые контакты на 1000 входов: проект",
+        description=(
+            f"{_GROWTH_REF} Новые контакты × 1000 / входы через проектные статьи за месяцы "
+            "обращения. Пусто, пока проектные статьи не опубликованы. Для вердикта гипотезы "
+            "сравнивай по когортам (growth_cohort_*), не по месяцам."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[На 1000 входов: проект]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Отношение сумм (DIVIDE(SUM новые × 1000, SUM входы)), поэтому на диапазоне "
+            "месяцев считается честно, а не средним по месяцам."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_control_per_1000_entries",
+        display_name="Новые контакты на 1000 входов: контроль",
+        description=(
+            f"{_GROWTH_REF} Новые контакты × 1000 / входы через обычные статьи фабрики "
+            "(контроль) за месяцы обращения. База для сравнения с проектом."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[На 1000 входов: контроль]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Отношение сумм. Контроль не режется направлением и ситуацией (у обычных статей их "
+            "нет). Малые числа: 1 новый контакт на ~1900 входов в месяц — одно обращение "
+            "заметно сдвигает значение."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_project_lift_vs_control_reference",
+        display_name="Прирост проекта к контролю по месяцам (справочно)",
+        description=(
+            f"{_GROWTH_REF} На 1000 входов проект / контроль − 1, доля (0,5 = +50%). "
+            "Справочно: в месяце обращения вместе считаются статьи любого возраста — свежие "
+            "проектные против давно живущих обычных, сравнение нечестно к проекту. Вердикт "
+            "гипотезы +50% — только growth_hypothesis_verdict (по когортам публикации). "
+            "Пусто, пока нет проектных значений."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Прирост к контролю]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Доля 0–1, не %*100. Пусто, если проект или контроль пусты либо контроль = 0.",
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_cohort_project_per_1000_entries",
+        display_name="На 1000 входов в когорте: проект",
+        description=(
+            f"{_GROWTH_REF} {_GROWTH_COHORT} Новые контакты × 1000 / входы у проектных "
+            "статей, опубликованных в выбранные месяцы. Пусто, пока проектные статьи не "
+            "опубликованы."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[На 1000 в когорте: проект]",
+        date_aware=True,
+        date_table=_GROWTH_COHORT_COL,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "start_date/end_date = месяц ПУБЛИКАЦИИ статей, не месяц обращения. Все прожитые "
+            "месяцы жизни статей (фильтра «Месяц жизни» в ask-pbi нет). Отношение сумм."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_cohort_control_per_1000_entries",
+        display_name="На 1000 входов в когорте: контроль",
+        description=(
+            f"{_GROWTH_REF} {_GROWTH_COHORT} Новые контакты × 1000 / входы у обычных статей "
+            "фабрики, опубликованных в выбранные месяцы."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[На 1000 в когорте: контроль]",
+        date_aware=True,
+        date_table=_GROWTH_COHORT_COL,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "start_date/end_date = месяц ПУБЛИКАЦИИ статей. Все прожитые месяцы жизни (у "
+            "свежих когорт — неполные). Не режется направлением."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_cohort_lift",
+        display_name="Прирост проекта к контролю в когорте",
+        description=(
+            f"{_GROWTH_REF} {_GROWTH_COHORT} На 1000 входов проект / контроль − 1 у статей "
+            "одной когорты публикации, доля (0,5 = +50%). +50% и выше — то, что ищет проект. "
+            "Пусто, пока нет проектных статей в когорте."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Прирост в когорте]",
+        date_aware=True,
+        date_table=_GROWTH_COHORT_COL,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Доля 0–1. Период = месяц публикации. Вердикт — growth_hypothesis_verdict.",
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_cohort_control_entries_m0_2",
+        display_name="Входы контроля когорты за месяцы жизни 0–2",
+        description=(
+            f"{_GROWTH_REF} {_GROWTH_COHORT} Сколько входов набрали обычные статьи фабрики "
+            "когорты за первые три месяца жизни (0 — месяц публикации, 1, 2). Порог вердикта — "
+            "1000 входов: меньше — «данных мало». Называй рядом с вердиктом."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Входы контроля, мес. 0–2]",
+        date_aware=True,
+        date_table=_GROWTH_COHORT_COL,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes="Период = месяц публикации. Человек, вошедший через две статьи когорты, учтён дважды.",
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_hypothesis_verdict",
+        display_name="Гипотеза +50%: вердикт по когортам",
+        description=(
+            f"{_GROWTH_REF} {_GROWTH_COHORT} Текст, не число: «гипотеза подтверждена», «не "
+            "подтверждена», «данных мало» или для нескольких когорт «подтверждена в N из M "
+            "зрелых когорт». Гипотеза: проектные статьи дают ≥ 1,5 × новых контактов на 1000 "
+            "входов против обычных статей той же когорты. Правило: месяцы жизни 0–2, когорта "
+            "прожила 3 месяца, у контроля когорты ≥ 1000 входов, иначе «данных мало». Без дат — "
+            "по всем когортам. Рядом называй growth_cohort_control_entries_m0_2 и "
+            "growth_project_new_contacts."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Гипотеза +50%]",
+        date_aware=True,
+        date_table=_GROWTH_COHORT_COL,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        notes=(
+            "Значение — строка; analyze_trend для неё отказывает (text_metric). Период = месяц "
+            "публикации. «Зрелость» когорты считается от TODAY() Service (UTC)."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_groups_by_new_contacts",
+        display_name="Новые контакты по группам страниц входа",
+        description=(
+            f"{_GROWTH_REF} Новые контакты, входы и на 1000 входов по группе страницы входа: "
+            "проект, контроль, легаси, прочее, без входа. Отвечает, через какие страницы "
+            "приходят новые люди. get_breakdown."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Новые контакты (рост)]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        kind="ranking",
+        category_column="'Рост группа✅'[Группа (код)]",
+        value_alias="new_contacts",
+        extra_values=(
+            ("entries", "[Входы (рост)]"),
+            ("per_1000_entries", "[На 1000 входов (рост)]"),
+        ),
+        notes=(
+            "Коды групп: project — проект, control — контроль, legacy — легаси, other — прочее, "
+            "none — без входа (у неё входов нет, per_1000 пусто). Месяц — месяц обращения."
+        ),
+        confirmed_on="2026-11-09",
+    ),
+    Metric(
+        metric_id="growth_top_articles_by_new_contacts",
+        display_name="Топ статей по новым контактам (рост контактов)",
+        description=(
+            f"{_GROWTH_REF} Статьи сайта, через которые вошли новые контакты: новые контакты, "
+            "входы, на 1000 входов, группа статьи (project / control / legacy) и когорта "
+            "публикации. Только статьи с ≥ 1 новым контактом. Сравнивай статьи одной когорты. "
+            "get_breakdown."
+        ),
+        status="confirmed",
+        datasets=("KPI marketing view",),
+        measure_dax_name="[Новые контакты (статья)]",
+        date_aware=True,
+        date_table=_GROWTH_MONTH,
+        date_granularity="month",
+        multi_period_aggregatable=True,
+        kind="ranking",
+        category_column="'Рост по статьям✅'[Статья]",
+        value_alias="new_contacts",
+        extra_values=(
+            ("entries", "[Входы (статья)]"),
+            ("per_1000_entries", "[На 1000 входов (статья)]"),
+            ("group", "SELECTEDVALUE('Рост по статьям✅'[Группа (код)])"),
+            ("cohort", "SELECTEDVALUE('Рост по статьям✅'[Когорта публикации])"),
+        ),
+        breakdown_row_filter="[Новые контакты (статья)] > 0",
+        notes=(
+            "Категория — URL статьи. Порог > 0: при 0–1 новых контактах на статью TOPN без "
+            "порога возвращает все статьи с ничьей нулей. Месяц — месяц обращения."
+        ),
+        confirmed_on="2026-11-09",
     ),
 ]
 
