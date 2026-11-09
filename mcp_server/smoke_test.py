@@ -218,10 +218,30 @@ def _smm_scenarios() -> None:
     )
 
 
+def _check_growth_registry() -> None:
+    """Офлайн: «Рост контактов» — месячные через 'Рост месяц✅', когортные через когорту."""
+    from mcp_server.critic import uses_year_month_key
+    from mcp_server.registry import get_registry
+
+    growth = [m for m in get_registry() if m.metric_id.startswith("growth_")]
+    assert len(growth) == 13, len(growth)
+    for m in growth:
+        assert m.datasets == ("KPI marketing view",), m.metric_id
+        assert m.date_granularity == "month", m.metric_id
+        assert not uses_year_month_key(m.date_table), m.metric_id  # Date-якорь, DATE()-фильтр
+        if "cohort" in m.metric_id or m.metric_id == "growth_hypothesis_verdict":
+            assert m.date_table == "'Рост когорты✅'[Когорта публикации]", m.metric_id
+            assert "ПУБЛИКАЦИИ" in m.description, m.metric_id
+        else:
+            assert m.date_table == "'Рост месяц✅'[Месяц (рост)]", m.metric_id
+    print("ok growth registry")
+
+
 def main() -> None:
     _check_catalog_helpers()
     _check_month_grain_registry()
     _smm_scenarios()
+    _check_growth_registry()
     _p("get_available_metrics()", get_available_metrics())
 
     _p(
@@ -367,6 +387,31 @@ def main() -> None:
     _p(
         "get_breakdown('top_entry_pages', 3)  — ожидаем URL hemonc.ru/poleznoe/…",
         get_breakdown("top_entry_pages", 3),
+    )
+
+    _p(
+        "get_metric_value('growth_control_per_1000_entries', окт 2026)  — ожидаем ~0.527",
+        get_metric_value("growth_control_per_1000_entries", "2026-10-01", "2026-10-31"),
+    )
+    _p(
+        "get_metric_value('growth_cohort_control_per_1000_entries', когорта 2026-09)  — ожидаем ~0.45",
+        get_metric_value("growth_cohort_control_per_1000_entries", "2026-09-01", "2026-09-30"),
+    )
+    _p(
+        "get_metric_value('growth_hypothesis_verdict')  — ожидаем текст, пока «данных мало»",
+        get_metric_value("growth_hypothesis_verdict"),
+    )
+    _p(
+        "analyze_trend('growth_hypothesis_verdict', …)  — ожидаем ok:false, text_metric",
+        analyze_trend(
+            "growth_hypothesis_verdict",
+            {"start_date": "2026-09-01", "end_date": "2026-09-30"},
+            {"start_date": "2026-08-01", "end_date": "2026-08-31"},
+        ),
+    )
+    _p(
+        "get_breakdown('growth_groups_by_new_contacts', 10, окт 2026)  — ожидаем control 1897 входов / 1 новый",
+        get_breakdown("growth_groups_by_new_contacts", 10, "2026-10-01", "2026-10-31"),
     )
 
     _p(
