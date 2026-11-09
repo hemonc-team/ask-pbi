@@ -549,6 +549,18 @@ def analyze_trend(metric_id: str, current_period: dict, previous_period: dict) -
         return cur
     if not prev.get("ok"):
         return prev
+    if isinstance(cur["value"], str) or isinstance(prev["value"], str):
+        # Текстовая мера (напр. вердикт «Гипотеза +50%»): дельту не считаем.
+        return {
+            "ok": False,
+            "reason": "text_metric",
+            "detail": (
+                "Значение этой метрики — текст, не число: динамику посчитать нельзя. "
+                "Спроси get_metric_value по каждому периоду отдельно."
+            ),
+            "current": cur["value"],
+            "previous": prev["value"],
+        }
 
     days_cur = period_days(current_period["start_date"], current_period["end_date"])
     days_prev = period_days(previous_period["start_date"], previous_period["end_date"])
