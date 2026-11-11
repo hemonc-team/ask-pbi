@@ -107,6 +107,16 @@
 
 Одна сеть и сравнение сетей — `smm_by_network` (get_breakdown): фильтра по сети в `get_metric_value` нет. «Лето против весны по Telegram» — два вызова `get_breakdown` по периодам.
 
+**Marketing — соцсети × оси фабрики (`KPI marketing view`, `Соцсети посты × оси✅` = `dwh.v_smm_post_axis_facts` + `dwh.smm_posts`, месяц публикации, вкладка «Соцсети × оси»):**
+
+| metric_id | Что | Дата |
+|---|---|---|
+| `smm_axis_emotion`, `smm_axis_disease_stage`, `smm_axis_disease_episode`, `smm_axis_reader_role`, `smm_axis_care_route`, `smm_axis_topic_kind`, `smm_axis_post_intent`, `smm_axis_nosology` | ranking: строка на значение оси (основное значение статьи) — `vs_usual` (медиана индекса д7 − 1) + articles, posts, median_index, likes_per_1000, repost_share, trust | MonthStartDate |
+| `smm_factory_posts_top` | ranking: посты фабрики по индексу д7 + article, network, posted, views_d7 | MonthStartDate |
+| `smm_factory_posts`, `smm_factory_articles` | scalar: посты / статьи фабрики в соцсетях | YearMonth |
+
+Фильтров у инструментов нет: ось и «основное» значение зашиты в DAX метрики (`CALCULATE(мера, [Ось] = "…", [Тип значения] = "основное")`), поэтому по одной ranking-метрике на ось. Вывод — только при `trust` = «ок» (5 статей и больше), разницу меньше 20–25% эффектом не называть.
+
 **Marketing — региональная воронка (`KPI marketing view`, island `Региональная воронка✅`, день):**
 
 | metric_id | Мера | multi-period |

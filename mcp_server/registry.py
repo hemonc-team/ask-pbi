@@ -1516,6 +1516,144 @@ REGISTRY: list[Metric] = [
 ]
 
 
+# --- KPI marketing view: «Соцсети × оси» — какие значения осей фабрики заходят в соцсетях ---
+# Таблица 'Соцсети посты × оси✅' = dwh.v_smm_post_axis_facts + dwh.smm_posts (пост соцсети ×
+# значение оси фабрики), меры — pbi expressions/Соцсети_оси_меры.dax, ТЗ pbi
+# docs/domain/СОЦСЕТИ_оси_постов_TZ.md. Фильтров у инструментов нет, поэтому ось и «основное»
+# значение зашиты в выражение: по одной ranking-метрике на ось. Дата — месяц публикации поста;
+# для топа — date_dim_month[MonthStartDate] (с YearMonth get_breakdown отказывает).
+_SMM_AX = "'Соцсети посты × оси✅'"
+_SMM_AX_PRIMARY = f'{_SMM_AX}[Тип значения] = "основное"'
+_SMM_AX_TERMS = (
+    "Посты фабрики контента во ВКонтакте, Facebook, Instagram и Telegram с 01.09.2026. Пост "
+    "сравнивается по просмотрам на 7-й день жизни: индекс = просмотры ÷ медиана просмотров на "
+    "7-й день постов той же сети за месяц публикации. vs_usual = медиана индекса − 1 "
+    "(0,09 — на 9% больше просмотров, чем у обычного поста своей сети). Вывод — только при "
+    "trust = «ок» (5 статей и больше); разницу меньше 20–25% эффектом не называй."
+)
+_SMM_AX_FIELDS = (
+    "Поля строки: vs_usual — к обычному посту; articles — статей фабрики; posts — постов; "
+    "median_index — медиана индекса; likes_per_1000 — медиана лайков на 1000 просмотров "
+    "(только Telegram и Instagram); repost_share — доля постов с репостом к 7-му дню "
+    "(Instagram с 11.11.2026, Telegram не собирается); trust — «ок» / «мало данных»."
+)
+# (суффикс metric_id, подпись оси в данных, что за ось)
+_SMM_AXES = (
+    ("emotion", "Эмоция", "как пост подан: напугал / успокоил / нейтрально"),
+    ("disease_stage", "Этап болезни", "здоров / диагностика / лечение / наблюдение / любой этап"),
+    ("disease_episode", "Первичный / повторный", "первичный / повторный / любой"),
+    ("reader_role", "Кому (роль)", "пациенты / пациенты и близкие / близкие"),
+    ("care_route", "Маршрут по клинике", "выбор клиники, подготовка к приёму и т.д."),
+    ("topic_kind", "Тема", "миф, о симптоме, о методе диагностики, психология и поддержка и т.д."),
+    ("post_intent", "Тип поста", "информирование / призыв"),
+    ("nosology", "Медраздел", "рак молочной железы, рак лёгкого, онкология в целом и т.д.; топ до 20 строк"),
+)
+
+
+def _smm_ax(measure: str, axis: str) -> str:
+    return f'CALCULATE({measure}, {_SMM_AX}[Ось] = "{axis}", {_SMM_AX_PRIMARY})'
+
+
+def _smm_axes_metrics() -> list[Metric]:
+    out: list[Metric] = []
+    for code, axis, what in _SMM_AXES:
+        out.append(
+            Metric(
+                metric_id=f"smm_axis_{code}",
+                display_name=f"Соцсети × оси: «{axis}» — какие значения заходят лучше",
+                description=(
+                    f"Строка на каждое значение оси «{axis}» ({what}), основное значение статьи. "
+                    f"get_breakdown, сортировка по vs_usual. {_SMM_AX_TERMS} {_SMM_AX_FIELDS} "
+                    "Период — месяц публикации поста."
+                ),
+                status="confirmed",
+                datasets=("KPI marketing view",),
+                measure_dax_name=_smm_ax("[Соцсети×оси к обычному посту]", axis),
+                date_aware=True,
+                date_table="date_dim_month[MonthStartDate]",
+                date_granularity="month",
+                multi_period_aggregatable=True,
+                kind="ranking",
+                category_column=f"{_SMM_AX}[Значение оси]",
+                value_alias="vs_usual",
+                extra_values=(
+                    ("articles", _smm_ax("[Соцсети×оси статей]", axis)),
+                    ("posts", _smm_ax("[Соцсети×оси постов]", axis)),
+                    ("median_index", _smm_ax("[Соцсети×оси медиана индекса]", axis)),
+                    ("likes_per_1000", _smm_ax("[Соцсети×оси лайков на 1000]", axis)),
+                    ("repost_share", _smm_ax("[Соцсети×оси доля с репостами]", axis)),
+                    ("trust", _smm_ax("[Соцсети×оси достоверность]", axis)),
+                ),
+                notes=(
+                    "Вкладка PBI «Соцсети × оси», таблица «Значения оси». vs_usual пустой — у постов "
+                    "значения ещё нет снимка 7-го дня. Live 2026-11-11, эмоция за всё время: "
+                    "нейтрально +9% (13 статей, 52 поста), успокоил −1% (7 статей, 26 постов), "
+                    "разница ниже порога; октябрь 2026: успокоил 3 статьи — «мало данных»."
+                ),
+                confirmed_on="2026-11-11",
+            )
+        )
+    _post = lambda e: _smm_ax(e, "Эмоция")  # noqa: E731 — одна строка на пост: эмоция есть у каждой статьи
+    out.append(
+        Metric(
+            metric_id="smm_factory_posts_top",
+            display_name="Соцсети × оси: посты фабрики с наибольшим индексом просмотров",
+            description=(
+                "Топ постов фабрики по индексу просмотров на 7-й день (index_d7: 1 — как обычный "
+                "пост своей сети за месяц, 2 — вдвое больше). Поля: article — статья фабрики "
+                "(content_id), network — сеть, posted — дата поста, views_d7 — просмотры на 7-й день. "
+                "get_breakdown. Период — месяц публикации."
+            ),
+            status="confirmed",
+            datasets=("KPI marketing view",),
+            measure_dax_name=_post("[Соцсети×оси медиана индекса]"),
+            date_aware=True,
+            date_table="date_dim_month[MonthStartDate]",
+            date_granularity="month",
+            multi_period_aggregatable=True,
+            kind="ranking",
+            category_column=f"{_SMM_AX}[Пост]",
+            value_alias="index_d7",
+            extra_values=(
+                ("article", _post(f"SELECTEDVALUE({_SMM_AX}[Статья])")),
+                ("network", _post(f"SELECTEDVALUE({_SMM_AX}[Сеть])")),
+                ("posted", _post(f"MAX({_SMM_AX}[Дата поста])")),
+                ("views_d7", _post(f"MAX({_SMM_AX}[Просмотры д7])")),
+            ),
+            notes=(
+                "Live 2026-11-11: первое место — Facebook, ovarian-symptoms-a3, 10 075 просмотров "
+                "(индекс 21,3; похоже на продвижение поста — предупреди, что это выброс)."
+            ),
+            confirmed_on="2026-11-11",
+        )
+    )
+    for metric_id, measure, name, what in (
+        ("smm_factory_posts", "[Соцсети×оси постов]", "Посты фабрики в соцсетях",
+         "Сколько постов фабрики контента вышло в 4 соцсетях (одна статья — до 4 постов)."),
+        ("smm_factory_articles", "[Соцсети×оси статей]", "Статьи фабрики в соцсетях",
+         "Сколько статей фабрики контента ушло в соцсети."),
+    ):
+        out.append(
+            Metric(
+                metric_id=metric_id,
+                display_name=name,
+                description=f"{what} Учитываются статьи с разметкой осей, посты с 01.09.2026. Период — месяц публикации.",
+                status="confirmed",
+                datasets=("KPI marketing view",),
+                measure_dax_name=measure,
+                date_aware=True,
+                date_table="date_dim_month[YearMonth]",
+                date_granularity="month",
+                multi_period_aggregatable=True,
+                notes="Live 2026-11-11 за всё время: 78 постов, 20 статей (у pet-ct-b1 и ct-mri-report нет осей).",
+                confirmed_on="2026-11-11",
+            )
+        )
+    return out
+
+
+REGISTRY.extend(_smm_axes_metrics())
+
 def get_registry() -> list[Metric]:
     """Копия текущего реестра (список объектов Metric)."""
     return list(REGISTRY)

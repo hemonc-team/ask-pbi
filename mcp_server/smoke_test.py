@@ -218,6 +218,45 @@ def _smm_scenarios() -> None:
     )
 
 
+def _check_smm_axes_registry() -> None:
+    """Офлайн: «Соцсети × оси» — по ranking на ось, ось и «основное» зашиты в DAX, дата MonthStartDate."""
+    from mcp_server.registry import find_metric, get_registry
+
+    axes = [m for m in get_registry() if m.metric_id.startswith("smm_axis_")]
+    assert len(axes) == 8, len(axes)
+    for m in axes:
+        assert m.kind == "ranking" and m.value_alias == "vs_usual", m.metric_id
+        assert m.date_table == "date_dim_month[MonthStartDate]", m.metric_id
+        assert m.category_column == "'Соцсети посты × оси✅'[Значение оси]", m.metric_id
+        assert '[Тип значения] = "основное"' in m.measure_dax_name, m.metric_id
+        assert [a for a, _ in m.extra_values] == [
+            "articles", "posts", "median_index", "likes_per_1000", "repost_share", "trust",
+        ], m.metric_id
+    top = find_metric("smm_factory_posts_top")
+    assert top.kind == "ranking" and top.category_column == "'Соцсети посты × оси✅'[Пост]"
+    for mid in ("smm_factory_posts", "smm_factory_articles"):
+        assert find_metric(mid).date_table == "date_dim_month[YearMonth]", mid
+    print("ok smm axes registry")
+
+
+def _smm_axes_scenarios() -> None:
+    """«Соцсети × оси»: контрольные цифры — pbi docs/domain/СОЦСЕТИ_оси_DESKTOP_APPLY.md, шаг 12."""
+    _p(
+        "get_breakdown('smm_axis_emotion')  — нейтрально +9% (13 статей), успокоил −1% (7 статей), на 11.11.2026",
+        get_breakdown("smm_axis_emotion", 10),
+    )
+    _p(
+        "get_breakdown('smm_axis_emotion', октябрь 2026)  — успокоил 3 статьи, trust «мало данных»",
+        get_breakdown("smm_axis_emotion", 10, "2026-10-01", "2026-10-31"),
+    )
+    _p("get_breakdown('smm_axis_topic_kind')", get_breakdown("smm_axis_topic_kind", 20))
+    _p("get_breakdown('smm_factory_posts_top', top 5)", get_breakdown("smm_factory_posts_top", 5))
+    _p(
+        "get_metric_value('smm_factory_posts', сен–ноя 2026)  — 78 на 11.11.2026",
+        get_metric_value("smm_factory_posts", "2026-09-01", "2026-11-30"),
+    )
+
+
 def _check_growth_registry() -> None:
     """Офлайн: «Рост контактов» — месячные через 'Рост месяц✅', когортные через когорту."""
     from mcp_server.critic import uses_year_month_key
@@ -242,6 +281,8 @@ def main() -> None:
     _check_month_grain_registry()
     _smm_scenarios()
     _check_growth_registry()
+    _check_smm_axes_registry()
+    _smm_axes_scenarios()
     _p("get_available_metrics()", get_available_metrics())
 
     _p(
