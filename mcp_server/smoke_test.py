@@ -242,11 +242,11 @@ def _check_smm_axes_registry() -> None:
 def _smm_axes_scenarios() -> None:
     """«Соцсети × оси»: контрольные цифры — pbi docs/domain/СОЦСЕТИ_оси_DESKTOP_APPLY.md, шаг 12."""
     _p(
-        "get_breakdown('smm_axis_emotion')  — нейтрально +9% (13 статей), успокоил −1% (7 статей), на 11.11.2026",
+        "get_breakdown('smm_axis_emotion')  — нейтрально +9% (32 поста / 8 статей в сравнении, ок), успокоил −1% (12 / 3, мало данных), на 11.11.2026",
         get_breakdown("smm_axis_emotion", 10),
     )
     _p(
-        "get_breakdown('smm_axis_emotion', октябрь 2026)  — успокоил 3 статьи, trust «мало данных»",
+        "get_breakdown('smm_axis_emotion', октябрь 2026)  — оба значения «мало данных»",
         get_breakdown("smm_axis_emotion", 10, "2026-10-01", "2026-10-31"),
     )
     _p("get_breakdown('smm_axis_topic_kind')", get_breakdown("smm_axis_topic_kind", 20))
